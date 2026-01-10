@@ -1,0 +1,1084 @@
+<!--
+ (c) Copyright Ascensio System SIA 2010-2025
+ 
+ This program is a free software product. You can redistribute it and/or
+ modify it under the terms of the GNU Affero General Public License (AGPL)
+ version 3 as published by the Free Software Foundation. In accordance with
+ Section 7(a) of the GNU AGPL its Section 15 shall be amended to the effect
+ that Ascensio System SIA expressly excludes the warranty of non-infringement
+ of any third-party rights.
+ 
+ This program is distributed WITHOUT ANY WARRANTY; without even the implied
+ warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR  PURPOSE. For
+ details, see the GNU AGPL at: http://www.gnu.org/licenses/agpl-3.0.html
+ 
+ You can contact Ascensio System SIA at 20A-6 Ernesta Birznieka-Upish
+ street, Riga, Latvia, EU, LV-1050.
+ 
+ The  interactive user interfaces in modified source and object code versions
+ of the Program must display Appropriate Legal Notices, as required under
+ Section 5 of the GNU AGPL version 3.
+ 
+ Pursuant to Section 7(b) of the License you must retain the original Product
+ logo when distributing the program. Pursuant to Section 7(e) we decline to
+ grant you any rights under trademark law for use of our trademarks.
+ 
+ All the Product's GUI elements, including illustrations and icon sets, as
+ well as technical writing content are licensed under the terms of the
+ Creative Commons Attribution-ShareAlike 4.0 International. See the License
+ terms at http://creativecommons.org/licenses/by-sa/4.0/legalcode
+ -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="UTF-8" />
+	<meta http-equiv="X-UA-Compatible" content="IE=edge,chrome=1">
+	<title>CSR Writer Agent</title>
+	<script type="text/javascript" src="https://onlyoffice.github.io/sdkjs-plugins/v1/plugins.js"></script>
+	<script type="text/javascript" src="https://onlyoffice.github.io/sdkjs-plugins/v1/plugins-ui.js"></script>
+	<script src="vendor/jquery/jquery-3.7.1.min.js"></script>
+	<link rel="stylesheet" href="https://onlyoffice.github.io/sdkjs-plugins/v1/plugins.css">
+	<link rel="stylesheet" href="./resources/styles/common.css">
+	<link rel="stylesheet" href="./resources/styles/csrWriter.css">
+	<style>
+		/* Inline styles to ensure proper rendering */
+		:root {
+			--csr-primary: #4a90d9;
+			--csr-primary-hover: #3a7bc8;
+			--csr-accent: #10b981;
+			--csr-text: #1f2937;
+			--csr-text-secondary: #6b7280;
+			--csr-text-muted: #9ca3af;
+			--csr-bg: #ffffff;
+			--csr-bg-secondary: #f9fafb;
+			--csr-bg-tertiary: #f3f4f6;
+			--csr-border: #e5e7eb;
+		}
+		body.theme-dark, body.theme-contrast-dark {
+			--csr-primary: #60a5fa;
+			--csr-primary-hover: #3b82f6;
+			--csr-accent: #34d399;
+			--csr-text: #f9fafb;
+			--csr-text-secondary: #d1d5db;
+			--csr-text-muted: #9ca3af;
+			--csr-bg: #1f2937;
+			--csr-bg-secondary: #111827;
+			--csr-bg-tertiary: #374151;
+			--csr-border: #4b5563;
+		}
+		.csr-writer-container {
+			display: flex;
+			flex-direction: column;
+			height: 100%;
+			background: var(--csr-bg);
+			color: var(--csr-text);
+			font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+		}
+		.csr-header {
+			display: flex;
+			align-items: center;
+			gap: 12px;
+			padding: 16px 20px;
+			background: linear-gradient(135deg, var(--csr-primary) 0%, var(--csr-primary-hover) 100%);
+			color: #fff;
+		}
+		.csr-header-icon {
+			display: flex;
+			align-items: center;
+			justify-content: center;
+			width: 40px;
+			height: 40px;
+			background: rgba(255,255,255,0.2);
+			border-radius: 8px;
+		}
+		.csr-header-icon svg { stroke: #fff; }
+		.csr-title { margin: 0; font-size: 18px; font-weight: 600; }
+		.csr-subtitle { margin: 2px 0 0; font-size: 12px; opacity: 0.9; }
+		.csr-content { flex: 1; overflow-y: auto; padding: 20px; }
+		.csr-section {
+			margin-bottom: 20px;
+			background: var(--csr-bg-secondary);
+			border: 1px solid var(--csr-border);
+			border-radius: 8px;
+			overflow: hidden;
+		}
+		.csr-section-header {
+			display: flex;
+			align-items: center;
+			justify-content: space-between;
+			padding: 12px 16px;
+			background: var(--csr-bg-tertiary);
+			border-bottom: 1px solid var(--csr-border);
+			font-weight: 600;
+			font-size: 14px;
+		}
+		.csr-section-content { padding: 16px; }
+		.csr-upload-intro {
+			margin: 0 0 16px;
+			font-size: 13px;
+			color: var(--csr-text-secondary);
+			line-height: 1.5;
+		}
+		.csr-file-upload {
+			margin-bottom: 16px;
+			padding: 16px;
+			background: var(--csr-bg);
+			border: 2px dashed var(--csr-border);
+			border-radius: 8px;
+			transition: border-color 0.2s;
+		}
+		.csr-file-upload:hover { border-color: var(--csr-primary); }
+		.csr-file-label {
+			display: block;
+			margin-bottom: 10px;
+			font-size: 13px;
+			font-weight: 600;
+			color: var(--csr-text);
+		}
+		.csr-file-input-wrapper {
+			display: flex;
+			align-items: center;
+			gap: 12px;
+			flex-wrap: wrap;
+		}
+		.csr-file-input {
+			position: absolute !important;
+			width: 1px !important;
+			height: 1px !important;
+			opacity: 0 !important;
+		}
+		.csr-file-button {
+			display: inline-flex;
+			align-items: center;
+			gap: 8px;
+			padding: 10px 16px;
+			font-size: 13px;
+			font-weight: 500;
+			color: var(--csr-primary);
+			background: transparent;
+			border: 2px solid var(--csr-primary);
+			border-radius: 6px;
+			cursor: pointer;
+			transition: all 0.2s;
+		}
+		.csr-file-button:hover {
+			background: var(--csr-primary);
+			color: #fff;
+		}
+		.csr-file-button:hover svg { stroke: #fff; }
+		.csr-file-button svg { stroke: var(--csr-primary); transition: stroke 0.2s; }
+		.csr-file-status { flex: 1; min-width: 0; }
+		.csr-file-name {
+			font-size: 13px;
+			color: var(--csr-text-muted);
+			overflow: hidden;
+			text-overflow: ellipsis;
+			white-space: nowrap;
+		}
+		.csr-file-name.has-file {
+			color: var(--csr-accent);
+			font-weight: 600;
+		}
+		.csr-file-name.has-file::before { content: "✓ "; }
+		.csr-upload-actions {
+			margin-top: 20px;
+			display: flex;
+			justify-content: center;
+		}
+		.csr-btn {
+			display: inline-flex;
+			align-items: center;
+			justify-content: center;
+			gap: 8px;
+			padding: 12px 24px;
+			font-size: 14px;
+			font-weight: 600;
+			border: none;
+			border-radius: 8px;
+			cursor: pointer;
+			transition: all 0.2s;
+		}
+		.csr-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+		.csr-btn-primary {
+			color: #fff;
+			background: linear-gradient(135deg, var(--csr-primary) 0%, var(--csr-primary-hover) 100%);
+			box-shadow: 0 4px 12px rgba(74, 144, 217, 0.3);
+		}
+		.csr-btn-primary:hover:not(:disabled) {
+			transform: translateY(-1px);
+			box-shadow: 0 6px 16px rgba(74, 144, 217, 0.4);
+		}
+		.csr-btn-primary svg { stroke: #fff; }
+		.csr-footer {
+			display: flex;
+			align-items: center;
+			justify-content: center;
+			padding: 12px 20px;
+			background: var(--csr-bg-secondary);
+			border-top: 1px solid var(--csr-border);
+			font-size: 11px;
+			color: var(--csr-text-muted);
+		}
+		.hidden { display: none !important; }
+		.csr-progress-container { margin-top: 20px; text-align: center; }
+		.csr-progress-bar {
+			height: 6px;
+			background: var(--csr-bg-tertiary);
+			border-radius: 3px;
+			overflow: hidden;
+			margin-bottom: 8px;
+		}
+		.csr-progress-fill {
+			height: 100%;
+			width: 0%;
+			background: linear-gradient(90deg, var(--csr-primary), var(--csr-accent));
+			border-radius: 3px;
+			transition: width 0.3s;
+		}
+		.csr-progress-text { font-size: 12px; color: var(--csr-text-secondary); }
+		.csr-success-message {
+			display: flex;
+			flex-direction: column;
+			align-items: center;
+			gap: 12px;
+			margin-top: 20px;
+			padding: 20px;
+			background: rgba(16, 185, 129, 0.1);
+			border: 1px solid rgba(16, 185, 129, 0.3);
+			border-radius: 8px;
+			text-align: center;
+		}
+		.csr-success-message svg { stroke: var(--csr-accent); }
+		.csr-success-message > span { font-size: 14px; font-weight: 500; color: var(--csr-accent); }
+		.csr-btn-text {
+			padding: 6px 12px;
+			color: var(--csr-primary);
+			background: transparent;
+			border: none;
+		}
+		.csr-btn-text:hover { text-decoration: underline; }
+		.csr-query-placeholder {
+			padding: 40px 20px;
+			text-align: center;
+			color: var(--csr-text-muted);
+			font-size: 13px;
+			font-style: italic;
+		}
+		/* Index Error Message */
+		.csr-index-error {
+			display: flex;
+			align-items: center;
+			gap: 12px;
+			margin-top: 16px;
+			padding: 14px 16px;
+			background: rgba(239, 68, 68, 0.1);
+			border: 1px solid rgba(239, 68, 68, 0.3);
+			border-radius: 8px;
+			color: #dc2626;
+		}
+		body.theme-dark .csr-index-error,
+		body.theme-contrast-dark .csr-index-error {
+			background: rgba(239, 68, 68, 0.15);
+			border-color: rgba(239, 68, 68, 0.4);
+			color: #f87171;
+		}
+		.csr-index-error svg { flex-shrink: 0; stroke: currentColor; }
+		.csr-index-error span { flex: 1; font-size: 13px; }
+		.csr-index-error button { flex-shrink: 0; font-size: 12px; }
+		/* Success Details */
+		.csr-success-details { display: flex; flex-direction: column; gap: 8px; margin-top: 4px; }
+		.csr-indexed-files { display: flex; flex-direction: column; gap: 4px; }
+		.csr-indexed-file {
+			font-size: 12px;
+			color: var(--csr-text-secondary);
+			padding: 4px 8px;
+			background: var(--csr-bg-tertiary);
+			border-radius: 4px;
+			overflow: hidden;
+			text-overflow: ellipsis;
+			white-space: nowrap;
+			max-width: 250px;
+		}
+		.csr-index-stats {
+			display: flex;
+			align-items: center;
+			justify-content: center;
+			gap: 8px;
+			font-size: 12px;
+			color: var(--csr-text-muted);
+		}
+		.csr-stat strong { color: var(--csr-accent); }
+		.csr-badge-success { background: var(--csr-accent); color: #fff; }
+		.csr-file-upload { transition: opacity 0.3s ease, border-color 0.2s ease; }
+		.csr-query-intro { margin: 0 0 16px; font-size: 13px; color: var(--csr-text-secondary); line-height: 1.5; }
+		
+		/* Query Input */
+		.csr-query-input-container { margin-bottom: 16px; }
+		.csr-query-input-wrapper {
+			display: flex;
+			gap: 8px;
+			padding: 8px;
+			background: var(--csr-bg);
+			border: 2px solid var(--csr-border);
+			border-radius: 12px;
+			transition: border-color 0.2s, box-shadow 0.2s;
+		}
+		.csr-query-input-wrapper:focus-within {
+			border-color: var(--csr-primary);
+			box-shadow: 0 0 0 3px rgba(74, 144, 217, 0.15);
+		}
+		.csr-query-input {
+			flex: 1;
+			min-height: 40px;
+			max-height: 120px;
+			padding: 8px 12px;
+			font-size: 14px;
+			line-height: 1.5;
+			color: var(--csr-text);
+			background: transparent;
+			border: none;
+			resize: none;
+			outline: none;
+			font-family: inherit;
+		}
+		.csr-query-input::placeholder { color: var(--csr-text-muted); }
+		.csr-query-submit {
+			display: flex;
+			align-items: center;
+			justify-content: center;
+			width: 40px;
+			height: 40px;
+			background: linear-gradient(135deg, var(--csr-primary) 0%, var(--csr-primary-hover) 100%);
+			color: #fff;
+			border: none;
+			border-radius: 8px;
+			cursor: pointer;
+			transition: transform 0.2s, box-shadow 0.2s;
+			flex-shrink: 0;
+			align-self: flex-end;
+		}
+		.csr-query-submit:hover:not(:disabled) {
+			transform: scale(1.05);
+			box-shadow: 0 4px 12px rgba(74, 144, 217, 0.3);
+		}
+		.csr-query-submit:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
+		.csr-query-submit svg { stroke: #fff; }
+		
+		/* Suggestion Chips */
+		.csr-query-suggestions {
+			display: flex;
+			flex-wrap: wrap;
+			gap: 8px;
+			margin-top: 10px;
+		}
+		.csr-suggestion-chip {
+			padding: 6px 12px;
+			font-size: 12px;
+			color: var(--csr-primary);
+			background: rgba(74, 144, 217, 0.1);
+			border: 1px solid rgba(74, 144, 217, 0.2);
+			border-radius: 16px;
+			cursor: pointer;
+			transition: all 0.2s;
+		}
+		.csr-suggestion-chip:hover {
+			background: rgba(74, 144, 217, 0.2);
+			border-color: var(--csr-primary);
+		}
+		
+		/* Response Container */
+		.csr-response-container {
+			margin-top: 20px;
+			padding: 16px;
+			background: var(--csr-bg-secondary);
+			border: 1px solid var(--csr-border);
+			border-radius: 12px;
+		}
+		
+		/* Loading State */
+		.csr-response-loading {
+			display: flex;
+			align-items: center;
+			gap: 12px;
+			padding: 12px 0;
+		}
+		.csr-loading-dots {
+			display: flex;
+			gap: 4px;
+		}
+		.csr-loading-dots span {
+			width: 8px;
+			height: 8px;
+			background: var(--csr-primary);
+			border-radius: 50%;
+			animation: loadingDot 1.4s ease-in-out infinite;
+		}
+		.csr-loading-dots span:nth-child(2) { animation-delay: 0.2s; }
+		.csr-loading-dots span:nth-child(3) { animation-delay: 0.4s; }
+		@keyframes loadingDot {
+			0%, 80%, 100% { transform: scale(0.6); opacity: 0.5; }
+			40% { transform: scale(1); opacity: 1; }
+		}
+		.csr-loading-text { font-size: 13px; color: var(--csr-text-secondary); }
+		
+		/* Response Content */
+		.csr-response-content { line-height: 1.6; }
+		.csr-response-text {
+			font-size: 14px;
+			color: var(--csr-text);
+			white-space: pre-wrap;
+			word-wrap: break-word;
+		}
+		.csr-response-text.typing::after {
+			content: '▋';
+			animation: blink 0.7s infinite;
+			color: var(--csr-primary);
+		}
+		@keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: 0; } }
+		
+		/* Sources */
+		.csr-sources-container {
+			margin-top: 16px;
+			padding-top: 16px;
+			border-top: 1px solid var(--csr-border);
+		}
+		.csr-sources-header {
+			display: flex;
+			align-items: center;
+			gap: 6px;
+			margin-bottom: 10px;
+			font-size: 12px;
+			font-weight: 600;
+			color: var(--csr-text-secondary);
+			text-transform: uppercase;
+			letter-spacing: 0.5px;
+		}
+		.csr-sources-header svg { stroke: var(--csr-text-muted); }
+		.csr-sources-list { display: flex; flex-direction: column; gap: 8px; }
+		.csr-source-card {
+			display: flex;
+			align-items: flex-start;
+			gap: 10px;
+			padding: 10px 12px;
+			background: var(--csr-bg);
+			border: 1px solid var(--csr-border);
+			border-radius: 8px;
+			transition: border-color 0.2s;
+		}
+		.csr-source-card:hover { border-color: var(--csr-primary); }
+		.csr-source-icon {
+			display: flex;
+			align-items: center;
+			justify-content: center;
+			width: 28px;
+			height: 28px;
+			background: rgba(74, 144, 217, 0.1);
+			border-radius: 6px;
+			flex-shrink: 0;
+		}
+		.csr-source-icon.protocol { background: rgba(74, 144, 217, 0.1); }
+		.csr-source-icon.protocol svg { stroke: var(--csr-primary); }
+		.csr-source-icon.sap { background: rgba(16, 185, 129, 0.1); }
+		.csr-source-icon.sap svg { stroke: var(--csr-accent); }
+		.csr-source-info { flex: 1; min-width: 0; }
+		.csr-source-title {
+			font-size: 13px;
+			font-weight: 500;
+			color: var(--csr-text);
+			margin-bottom: 2px;
+		}
+		.csr-source-detail {
+			font-size: 11px;
+			color: var(--csr-text-muted);
+			overflow: hidden;
+			text-overflow: ellipsis;
+			white-space: nowrap;
+		}
+		
+		/* Response Actions */
+		.csr-response-actions {
+			display: flex;
+			gap: 8px;
+			margin-top: 16px;
+			padding-top: 12px;
+			border-top: 1px solid var(--csr-border);
+		}
+		.csr-action-btn {
+			display: flex;
+			align-items: center;
+			gap: 6px;
+			padding: 8px 12px;
+			font-size: 12px;
+			color: var(--csr-text-secondary);
+			background: var(--csr-bg);
+			border: 1px solid var(--csr-border);
+			border-radius: 6px;
+			cursor: pointer;
+			transition: all 0.2s;
+		}
+		.csr-action-btn:hover {
+			color: var(--csr-primary);
+			border-color: var(--csr-primary);
+			background: rgba(74, 144, 217, 0.05);
+		}
+		.csr-action-btn svg { stroke: currentColor; }
+		.csr-action-btn.csr-action-primary {
+			color: #fff;
+			background: linear-gradient(135deg, var(--csr-primary) 0%, var(--csr-primary-hover) 100%);
+			border-color: var(--csr-primary);
+		}
+		.csr-action-btn.csr-action-primary:hover {
+			color: #fff;
+			box-shadow: 0 4px 12px rgba(74, 144, 217, 0.3);
+			transform: translateY(-1px);
+		}
+		.csr-action-btn.csr-action-primary svg { stroke: #fff; }
+		.csr-action-feedback {
+			display: inline-flex;
+			align-items: center;
+			gap: 4px;
+			padding: 4px 8px;
+			font-size: 11px;
+			color: var(--csr-accent);
+			background: rgba(16, 185, 129, 0.1);
+			border-radius: 4px;
+			margin-left: auto;
+		}
+		
+		/* Query Error */
+		.csr-query-error {
+			display: flex;
+			align-items: center;
+			gap: 10px;
+			margin-top: 16px;
+			padding: 12px 16px;
+			background: rgba(239, 68, 68, 0.1);
+			border: 1px solid rgba(239, 68, 68, 0.3);
+			border-radius: 8px;
+			color: #dc2626;
+			font-size: 13px;
+		}
+		.csr-query-error svg { flex-shrink: 0; stroke: currentColor; }
+		.csr-query-error span { flex: 1; }
+		body.theme-dark .csr-query-error, body.theme-contrast-dark .csr-query-error {
+			background: rgba(239, 68, 68, 0.15);
+			color: #f87171;
+		}
+	</style>
+</head>
+<body class="noselect">
+	<div class="csr-writer-container">
+		<!-- Header -->
+		<div class="csr-header">
+			<div class="csr-header-icon">
+				<svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+					<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+					<polyline points="14 2 14 8 20 8"></polyline>
+					<line x1="16" y1="13" x2="8" y2="13"></line>
+					<line x1="16" y1="17" x2="8" y2="17"></line>
+					<polyline points="10 9 9 9 8 9"></polyline>
+				</svg>
+			</div>
+			<div class="csr-header-content">
+				<h1 class="csr-title i18n">CSR Writer Agent</h1>
+				<p class="csr-subtitle i18n">Clinical Study Report Assistant</p>
+			</div>
+		</div>
+
+		<!-- Main Content Area -->
+		<div class="csr-content">
+			<!-- File Upload Section -->
+			<div class="csr-section csr-upload-section" id="upload-section">
+				<div class="csr-section-header">
+					<span class="csr-section-title i18n">Document Upload</span>
+					<span class="csr-section-badge" id="upload-status-badge"></span>
+				</div>
+				<div class="csr-section-content">
+					<p class="csr-upload-intro i18n">
+						Upload your Protocol and SAP documents to begin. Supported formats: PDF, DOCX, MD, MMD.
+					</p>
+
+					<!-- Protocol Upload -->
+					<div class="csr-file-upload" id="protocol-upload">
+						<label class="csr-file-label i18n">Protocol Document</label>
+						<div class="csr-file-input-wrapper">
+							<input type="file" id="protocol-file" accept=".pdf,.docx,.md,.mmd" class="csr-file-input" style="position:absolute;width:1px;height:1px;opacity:0;overflow:hidden;" />
+							<label for="protocol-file" class="csr-file-button">
+								<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+									<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+									<polyline points="17 8 12 3 7 8"></polyline>
+									<line x1="12" y1="3" x2="12" y2="15"></line>
+								</svg>
+								<span class="i18n">Choose File</span>
+							</label>
+							<div class="csr-file-status" id="protocol-status">
+								<span class="csr-file-name i18n">No file selected</span>
+							</div>
+						</div>
+						<div class="csr-file-error hidden" id="protocol-error"></div>
+					</div>
+
+					<!-- SAP Upload -->
+					<div class="csr-file-upload" id="sap-upload">
+						<label class="csr-file-label i18n">Statistical Analysis Plan (SAP)</label>
+						<div class="csr-file-input-wrapper">
+							<input type="file" id="sap-file" accept=".pdf,.docx,.md,.mmd" class="csr-file-input" style="position:absolute;width:1px;height:1px;opacity:0;overflow:hidden;" />
+							<label for="sap-file" class="csr-file-button">
+								<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+									<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+									<polyline points="17 8 12 3 7 8"></polyline>
+									<line x1="12" y1="3" x2="12" y2="15"></line>
+								</svg>
+								<span class="i18n">Choose File</span>
+							</label>
+							<div class="csr-file-status" id="sap-status">
+								<span class="csr-file-name i18n">No file selected</span>
+							</div>
+						</div>
+						<div class="csr-file-error hidden" id="sap-error"></div>
+					</div>
+
+					<!-- Process Button -->
+					<div class="csr-upload-actions">
+						<button id="process-btn" class="csr-btn csr-btn-primary" disabled>
+							<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+								<polyline points="16 16 12 12 8 16"></polyline>
+								<line x1="12" y1="12" x2="12" y2="21"></line>
+								<path d="M20.39 18.39A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.3"></path>
+							</svg>
+							<span class="i18n">Process & Index</span>
+						</button>
+					</div>
+
+					<!-- Progress Bar (hidden by default) -->
+					<div class="csr-progress-container hidden" id="progress-container">
+						<div class="csr-progress-bar">
+							<div class="csr-progress-fill" id="progress-fill"></div>
+						</div>
+						<span class="csr-progress-text" id="progress-text">Indexing documents...</span>
+						<p class="csr-progress-note i18n" style="font-size: 11px; color: var(--csr-text-muted); margin-top: 12px;">
+							Note: First-time indexing may take 2-10 minutes depending on document size. 
+							Subsequent uploads of the same files will be instant.
+						</p>
+					</div>
+
+					<!-- Success Message (hidden by default) -->
+					<div class="csr-success-message hidden" id="success-message">
+						<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+							<path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path>
+							<polyline points="22 4 12 14.01 9 11.01"></polyline>
+						</svg>
+						<span class="i18n">Documents indexed successfully!</span>
+						<button id="reupload-btn" class="csr-btn csr-btn-text i18n">Upload New Documents</button>
+					</div>
+				</div>
+			</div>
+
+			<!-- Query Section (hidden until documents are indexed) -->
+			<div class="csr-section csr-query-section hidden" id="query-section">
+				<div class="csr-section-header">
+					<span class="csr-section-title i18n">Ask CSR Writer</span>
+				</div>
+				<div class="csr-section-content">
+					<p class="csr-query-intro i18n">
+						Ask questions about your documents or request help writing CSR sections.
+					</p>
+					
+					<!-- Query Input -->
+					<div class="csr-query-input-container">
+						<div class="csr-query-input-wrapper">
+							<textarea 
+								id="query-input" 
+								class="csr-query-input" 
+								placeholder="Ask about endpoints, inclusion criteria, study design..."
+								rows="2"
+							></textarea>
+							<button id="query-btn" class="csr-query-submit" title="Send query" onclick="console.log('Query btn clicked via onclick'); if(window.CSRWriter && window.CSRWriter.submitQuery) { window.CSRWriter.submitQuery(); } else { console.error('CSRWriter not available'); }">
+								<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+									<line x1="22" y1="2" x2="11" y2="13"></line>
+									<polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+								</svg>
+							</button>
+						</div>
+						<div class="csr-query-suggestions">
+							<button class="csr-suggestion-chip" data-query="What are the primary endpoints?">Primary endpoints</button>
+							<button class="csr-suggestion-chip" data-query="What are the inclusion criteria?">Inclusion criteria</button>
+							<button class="csr-suggestion-chip" data-query="Summarize the study design">Study design</button>
+						</div>
+					</div>
+
+					<!-- Response Area -->
+					<div class="csr-response-container hidden" id="response-container">
+						<!-- Loading State -->
+						<div class="csr-response-loading hidden" id="response-loading">
+							<div class="csr-loading-dots">
+								<span></span><span></span><span></span>
+							</div>
+							<span class="csr-loading-text" id="loading-text">Thinking...</span>
+						</div>
+
+						<!-- Response Content -->
+						<div class="csr-response-content" id="response-content">
+							<div class="csr-response-text" id="response-text"></div>
+						</div>
+
+						<!-- Sources -->
+						<div class="csr-sources-container hidden" id="sources-container">
+							<div class="csr-sources-header">
+								<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+									<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+									<polyline points="14 2 14 8 20 8"></polyline>
+								</svg>
+								<span class="i18n">Sources</span>
+							</div>
+							<div class="csr-sources-list" id="sources-list"></div>
+						</div>
+
+						<!-- Response Actions -->
+						<div class="csr-response-actions hidden" id="response-actions">
+							<button class="csr-action-btn csr-action-primary" id="insert-btn" title="Insert at cursor position in document">
+								<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+									<path d="M12 5v14M5 12h14"></path>
+								</svg>
+								<span class="i18n">Insert at Cursor</span>
+							</button>
+							<button class="csr-action-btn" id="replace-btn" title="Replace selected text in document">
+								<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+									<path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"></path>
+								</svg>
+								<span class="i18n">Replace Selection</span>
+							</button>
+							<button class="csr-action-btn" id="copy-btn" title="Copy to clipboard">
+								<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+									<rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+									<path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+								</svg>
+								<span class="i18n">Copy</span>
+							</button>
+							<button class="csr-action-btn" id="new-query-btn" title="Ask another question">
+								<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+									<polyline points="1 4 1 10 7 10"></polyline>
+									<path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"></path>
+								</svg>
+								<span class="i18n">New Query</span>
+							</button>
+						</div>
+					</div>
+
+					<!-- Query Error -->
+					<div class="csr-query-error hidden" id="query-error">
+						<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+							<circle cx="12" cy="12" r="10"></circle>
+							<line x1="12" y1="8" x2="12" y2="12"></line>
+							<line x1="12" y1="16" x2="12.01" y2="16"></line>
+						</svg>
+						<span id="query-error-text"></span>
+						<button class="csr-btn csr-btn-text" id="retry-query-btn">Retry</button>
+					</div>
+				</div>
+			</div>
+		</div>
+
+		<!-- Footer -->
+		<div class="csr-footer">
+			<span class="csr-footer-text i18n">Powered by AI</span>
+		</div>
+	</div>
+
+	<div id="loader-container" class="loader hidden"></div>
+
+	<script type="text/javascript" src="scripts/utils/theme.js"></script>
+	<script type="text/javascript" src="scripts/csrWriter.js"></script>
+	<script type="text/javascript">
+		// Inline initialization to ensure file handlers work
+		(function() {
+			console.log('CSR Writer inline: Starting initialization');
+			
+			function setupInlineHandlers() {
+				console.log('CSR Writer inline: Setting up handlers');
+				
+				var protocolInput = document.getElementById('protocol-file');
+				var sapInput = document.getElementById('sap-file');
+				var processBtn = document.getElementById('process-btn');
+				
+				console.log('CSR Writer inline: Elements found:', {
+					protocol: !!protocolInput,
+					sap: !!sapInput,
+					btn: !!processBtn
+				});
+				
+				var protocolFile = null;
+				var sapFile = null;
+				
+				function updateButton() {
+					if (processBtn) {
+						var enabled = protocolFile && sapFile;
+						processBtn.disabled = !enabled;
+						console.log('CSR Writer inline: Button enabled:', enabled);
+					}
+				}
+				
+				function handleFile(file, type) {
+					console.log('CSR Writer inline: File selected:', type, file ? file.name : 'none');
+					
+					var statusEl = document.getElementById(type + '-status');
+					var nameEl = statusEl ? statusEl.querySelector('.csr-file-name') : null;
+					
+					if (!file) {
+						if (nameEl) {
+							nameEl.textContent = 'No file selected';
+							nameEl.classList.remove('has-file');
+						}
+						if (type === 'protocol') protocolFile = null;
+						else sapFile = null;
+						updateButton();
+						return;
+					}
+					
+					// Store file
+					if (type === 'protocol') protocolFile = file;
+					else sapFile = file;
+					
+					// Update UI
+					if (nameEl) {
+						nameEl.textContent = file.name;
+						nameEl.classList.add('has-file');
+						console.log('CSR Writer inline: Updated display to:', file.name);
+					}
+					
+					updateButton();
+				}
+				
+				if (protocolInput) {
+					protocolInput.onchange = function(e) {
+						console.log('CSR Writer inline: Protocol change event');
+						handleFile(e.target.files[0], 'protocol');
+					};
+				}
+				
+				if (sapInput) {
+					sapInput.onchange = function(e) {
+						console.log('CSR Writer inline: SAP change event');
+						handleFile(e.target.files[0], 'sap');
+					};
+				}
+				
+				// Setup query button handler as backup
+				var queryBtn = document.getElementById('query-btn');
+				var queryInput = document.getElementById('query-input');
+				
+				if (queryBtn) {
+					queryBtn.onclick = function() {
+						console.log('CSR Writer inline: Query button clicked');
+						// Try to call submitQuery directly - let it handle validation
+						if (window.CSRWriter && typeof window.CSRWriter.submitQuery === 'function') {
+							console.log('CSR Writer inline: Calling CSRWriter.submitQuery()');
+							window.CSRWriter.submitQuery();
+						} else {
+							console.error('CSR Writer inline: CSRWriter.submitQuery not available');
+							// Fallback: check state and make direct API call
+							var state = window.CSRWriter ? window.CSRWriter.getState() : null;
+							console.log('CSR Writer inline: State:', state);
+							if (state && state.sessionId && queryInput && queryInput.value.trim()) {
+								console.log('CSR Writer inline: Making direct API call');
+								inlineSubmitQuery(state.sessionId, queryInput.value.trim());
+							} else {
+								console.error('CSR Writer inline: Cannot submit - no session or query');
+							}
+						}
+					};
+					console.log('CSR Writer inline: Query button handler attached');
+				}
+				
+				// Enable query button when there's input - always enable if there's text
+				if (queryInput) {
+					queryInput.oninput = function() {
+						console.log('CSR Writer inline: Query input changed');
+						if (queryBtn) {
+							var hasText = queryInput.value.trim().length > 0;
+							queryBtn.disabled = !hasText;
+							console.log('CSR Writer inline: Button disabled =', !hasText);
+						}
+					};
+				}
+				
+				// Setup action button handlers
+				var insertBtn = document.getElementById('insert-btn');
+				var replaceBtn = document.getElementById('replace-btn');
+				var copyBtn = document.getElementById('copy-btn');
+				var newQueryBtn = document.getElementById('new-query-btn');
+				
+				if (insertBtn) {
+					insertBtn.onclick = function() {
+						console.log('CSR Writer inline: Insert button clicked');
+						var response = window._csrLastResponse || (window.CSRWriter && window.CSRWriter.getLastResponse ? window.CSRWriter.getLastResponse() : '');
+						if (response) {
+							try {
+								// Try to insert via plugin API
+								if (window.Asc && window.Asc.plugin) {
+									var html = '<p>' + response.replace(/\n\n/g, '</p><p>').replace(/\n/g, '<br>') + '</p>';
+									window.Asc.plugin.executeMethod('PasteHtml', [html]);
+									showInlineFeedback('Inserted!');
+								}
+							} catch (e) {
+								console.error('Insert error:', e);
+								showInlineFeedback('Insert failed');
+							}
+						}
+					};
+				}
+				
+				if (replaceBtn) {
+					replaceBtn.onclick = function() {
+						console.log('CSR Writer inline: Replace button clicked');
+						var response = window._csrLastResponse || (window.CSRWriter && window.CSRWriter.getLastResponse ? window.CSRWriter.getLastResponse() : '');
+						if (response) {
+							try {
+								if (window.Asc && window.Asc.plugin) {
+									var html = '<p>' + response.replace(/\n\n/g, '</p><p>').replace(/\n/g, '<br>') + '</p>';
+									window.Asc.plugin.executeMethod('PasteHtml', [html]);
+									showInlineFeedback('Replaced!');
+								}
+							} catch (e) {
+								console.error('Replace error:', e);
+								showInlineFeedback('Replace failed');
+							}
+						}
+					};
+				}
+				
+				if (copyBtn) {
+					copyBtn.onclick = function() {
+						console.log('CSR Writer inline: Copy button clicked');
+						var response = window._csrLastResponse || (window.CSRWriter && window.CSRWriter.getLastResponse ? window.CSRWriter.getLastResponse() : '');
+						if (response && navigator.clipboard) {
+							navigator.clipboard.writeText(response).then(function() {
+								showInlineFeedback('Copied!');
+							}).catch(function() {
+								showInlineFeedback('Copy failed');
+							});
+						}
+					};
+				}
+				
+				if (newQueryBtn) {
+					newQueryBtn.onclick = function() {
+						console.log('CSR Writer inline: New query button clicked');
+						if (queryInput) {
+							queryInput.value = '';
+							queryInput.focus();
+						}
+						var responseContainer = document.getElementById('response-container');
+						if (responseContainer) responseContainer.classList.add('hidden');
+						window._csrLastResponse = '';
+					};
+				}
+				
+				function showInlineFeedback(message) {
+					var actionsEl = document.getElementById('response-actions');
+					if (!actionsEl) return;
+					var existing = actionsEl.querySelector('.csr-action-feedback');
+					if (existing) existing.remove();
+					var feedback = document.createElement('span');
+					feedback.className = 'csr-action-feedback';
+					feedback.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"></polyline></svg>' + message;
+					actionsEl.appendChild(feedback);
+					setTimeout(function() { if (feedback.parentNode) feedback.remove(); }, 3000);
+				}
+				
+				// Fallback inline query submission
+				function inlineSubmitQuery(sessionId, query) {
+					console.log('CSR Writer inline: inlineSubmitQuery called', sessionId, query);
+					
+					// Determine API URL
+					var baseUrl = window.location.origin;
+					var queryUrl = baseUrl + '/api/csr-writer/query';
+					
+					console.log('CSR Writer inline: Fetching', queryUrl);
+					
+					// Show loading
+					var responseContainer = document.getElementById('response-container');
+					var loadingEl = document.getElementById('response-loading');
+					var responseText = document.getElementById('response-text');
+					
+					if (responseContainer) responseContainer.classList.remove('hidden');
+					if (loadingEl) loadingEl.classList.remove('hidden');
+					if (responseText) responseText.textContent = '';
+					
+					fetch(queryUrl, {
+						method: 'POST',
+						headers: { 'Content-Type': 'application/json' },
+						body: JSON.stringify({ sessionId: sessionId, query: query })
+					})
+					.then(function(response) {
+						console.log('CSR Writer inline: Response status', response.status);
+						return response.text();
+					})
+					.then(function(text) {
+						console.log('CSR Writer inline: Response text', text);
+						if (loadingEl) loadingEl.classList.add('hidden');
+						
+						// Parse SSE format and display
+						var fullResponse = '';
+						var sources = [];
+						var lines = text.split('\n');
+						lines.forEach(function(line) {
+							if (line.startsWith('data: ')) {
+								try {
+									var data = JSON.parse(line.slice(6));
+									if (data.type === 'chunk') {
+										fullResponse += data.text;
+									} else if (data.type === 'sources') {
+										sources = data.sources || [];
+									}
+								} catch (e) {}
+							}
+						});
+						
+						if (responseText) {
+							responseText.textContent = fullResponse || 'No response received';
+						}
+						
+						// Store response for actions
+						window._csrLastResponse = fullResponse;
+						
+						// Show action buttons
+						var actionsEl = document.getElementById('response-actions');
+						if (actionsEl) {
+							actionsEl.classList.remove('hidden');
+						}
+						
+						// Show sources if available
+						if (sources.length > 0) {
+							var sourcesContainer = document.getElementById('sources-container');
+							var sourcesList = document.getElementById('sources-list');
+							if (sourcesContainer && sourcesList) {
+								sourcesList.innerHTML = sources.map(function(s) {
+									var iconClass = s.type === 'protocol' ? 'protocol' : 'sap';
+									return '<div class="csr-source-card"><div class="csr-source-icon ' + iconClass + '"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline></svg></div><div class="csr-source-info"><div class="csr-source-title">' + (s.title || 'Source') + '</div><div class="csr-source-detail">' + (s.section || '') + (s.page ? ' • Page ' + s.page : '') + '</div></div></div>';
+								}).join('');
+								sourcesContainer.classList.remove('hidden');
+							}
+						}
+					})
+					.catch(function(error) {
+						console.error('CSR Writer inline: Fetch error', error);
+						if (loadingEl) loadingEl.classList.add('hidden');
+						if (responseText) responseText.textContent = 'Error: ' + error.message;
+					});
+				}
+				
+				console.log('CSR Writer inline: Handlers attached');
+			}
+			
+			// Run immediately since DOM should be ready
+			if (document.readyState === 'complete' || document.readyState === 'interactive') {
+				setupInlineHandlers();
+			} else {
+				document.addEventListener('DOMContentLoaded', setupInlineHandlers);
+			}
+		})();
+	</script>
+</body>
+</html>
+

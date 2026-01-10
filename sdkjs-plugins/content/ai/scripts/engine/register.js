@@ -663,6 +663,18 @@ async function registerButtons(window, undefined)
 			});
 			buttonGS.split = true;
 		}
+
+		// CSR Writer button (Word editor only)
+		if (Asc.Editor.getType() === "word")
+		{
+			let buttonCSRWriter = new Asc.ButtonToolbar(buttonMainToolbar);
+			buttonCSRWriter.text = "CSR Writer";
+			buttonCSRWriter.icons = getToolBarButtonIcons("csr-writer");
+			buttonCSRWriter.separator = true;
+			buttonCSRWriter.attachOnClick(function(){
+				onOpenCSRWriterModal();
+			});
+		}
 	}
 
 	// register actions

@@ -37,6 +37,7 @@ let customProvidersWindow = null;
 let summarizationWindow = null;
 let translateSettingsWindow = null;
 let helperWindow = null;
+let csrWriterWindow = null;
 
 let spellchecker = null;
 let grammar = null;
@@ -777,6 +778,9 @@ window.Asc.plugin.button = async function(id, windowId) {
 	} else if (customProvidersWindow && windowId === customProvidersWindow.id) {
 		customProvidersWindow.close();
 		customProvidersWindow = null;
+	} else if (csrWriterWindow && windowId === csrWriterWindow.id) {
+		csrWriterWindow.close();
+		csrWriterWindow = null;
 	} else {
 		window.Asc.plugin.executeMethod("CloseWindow", [windowId]);
 	}
@@ -793,6 +797,7 @@ window.Asc.plugin.onThemeChanged = function(theme) {
 	customProvidersWindow && customProvidersWindow.command('onThemeChanged', theme);
 	window.chatWindow && window.chatWindow.command('onThemeChanged', theme);
 	helperWindow && helperWindow.command('onThemeChanged', theme);
+	csrWriterWindow && csrWriterWindow.command('onThemeChanged', theme);
 
 	if (textAnnotatorPopup && textAnnotatorPopup.popup)
 		textAnnotatorPopup.popup.command('onThemeChanged', theme);
@@ -1128,4 +1133,51 @@ function onOpenSummarizationModal() {
 	});	
 
 	summarizationWindow.show(variation);
+}
+
+/**
+ * CSR WRITER WINDOW
+ */
+function onOpenCSRWriterModal() {
+	let variation = {
+		url : 'csrWriter.html',
+		description : window.Asc.plugin.tr('CSR Writer Agent'),
+		isVisual : true,
+		buttons : [],
+		icons: "resources/icons/%theme-name%(theme-default|theme-system|theme-classic-light)/%theme-type%(light|dark)/csr-writer%state%(normal|active)%scale%(default).png",
+		isModal : false,
+		isCanDocked: true,
+		type: window.localStorage.getItem("onlyoffice_ai_csrwriter_placement") || "window",
+		EditorsSupport : ["word"],
+		size : [500, 600]
+	};
+
+	if (csrWriterWindow) {
+		csrWriterWindow.activate();
+		return;
+	}
+
+	csrWriterWindow = new window.Asc.PluginWindow();
+
+	csrWriterWindow.attachEvent("onWindowReady", function() {
+		Asc.Editor.callMethod("ResizeWindow", [csrWriterWindow.id, [500, 600], [400, 400], [0, 0]]);
+	});
+
+	csrWriterWindow.attachEvent("onDockedChanged", async function(type) {
+		window.localStorage.setItem("onlyoffice_ai_csrwriter_placement", type);
+
+		async function waitSaveSettings() {
+			return new Promise(resolve => (function(){
+				csrWriterWindow.attachEvent("onUpdateState", function(type) {
+					resolve();
+				});
+				csrWriterWindow.command("onUpdateState");
+			})());
+		};
+		
+		await waitSaveSettings();
+		Asc.Editor.callMethod("OnWindowDockChangedCallback", [csrWriterWindow.id]);
+	});
+
+	csrWriterWindow.show(variation);
 }

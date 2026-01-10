@@ -41,6 +41,21 @@
 	let bCreateLoader = true;
 	let themeType = 'light';
 	let regenerationMessageIndex = null;	//Index of the message for which a new reply is being created
+	let searchModeEnabled = false;	// Regulatory search mode toggle
+	let currentSearchAbortController = null;	// For cancelling search requests
+
+	// Regulatory Search Configuration
+	// Regulatory Search API - use parent origin for the endpoint
+	const REGULATORY_SEARCH_API = (function() {
+		try {
+			// Get the base URL from parent window or current location
+			var baseUrl = window.parent.location.origin || window.location.origin;
+			return baseUrl + '/api/regulatory-search';
+		} catch (e) {
+			// Fallback if cross-origin
+			return '/api/regulatory-search';
+		}
+	})();
 
 	const ErrorCodes = {
 		UNKNOWN: 1
@@ -392,7 +407,23 @@
 				window.open(e.target.href, "_blank");
 			}
 		});
+
+		// Search toggle listener
+		var searchToggle = document.getElementById('search_toggle');
+		if (searchToggle) {
+			searchToggle.addEventListener('change', function(e) {
+				searchModeEnabled = e.target.checked;
+				updateSearchModeUI();
+			});
+		}
 	};
+
+	function updateSearchModeUI() {
+		var placeholder = searchModeEnabled 
+			? 'Search regulatory documents...' 
+			: window.Asc.plugin.tr('Ask AI anything');
+		document.getElementById('input_message').setAttribute('placeholder', placeholder);
+	}
 
 
 	function onSubmit() {
@@ -403,12 +434,379 @@
 		}
 		let value = textarea.value.trim();
 		if (value.length) {
-			sendMessage(textarea.value.trim());
+			if (searchModeEnabled) {
+				// Use regulatory search mode
+				performRegulatorySearch(value);
+			} else {
+				// Use normal AI chat mode
+				sendMessage(value);
+			}
 			textarea.value = '';
 			updateTextareaSize();
 			document.getElementById('cur_tokens').innerText = 0;
 		}
 	};
+
+	// ============================================
+	// REGULATORY SEARCH FUNCTIONS
+	// ============================================
+
+	function performRegulatorySearch(query) {
+		// Add user message to chat
+		messagesList.add({ role: 'user', content: query });
+
+		// Create search results container
+		var searchResultsEl = createSearchResultsUI();
+		var generatedAnswer = '';
+		var sources = [];
+		
+		console.log('Regulatory Search API URL:', REGULATORY_SEARCH_API);
+		console.log('Sending query:', query);
+		
+		// Use XMLHttpRequest for better compatibility with iframe context
+		var xhr = new XMLHttpRequest();
+		xhr.open('POST', REGULATORY_SEARCH_API, true);
+		xhr.setRequestHeader('Content-Type', 'application/json');
+		
+		var buffer = '';
+		var lastProcessedIndex = 0;
+		
+		xhr.onprogress = function() {
+			// Process new data as it arrives
+			var newData = xhr.responseText.substring(lastProcessedIndex);
+			lastProcessedIndex = xhr.responseText.length;
+			
+			buffer += newData;
+			var lines = buffer.split('\n\n');
+			buffer = lines.pop() || '';
+			
+			for (var i = 0; i < lines.length; i++) {
+				var line = lines[i].trim();
+				if (line.startsWith('data: ')) {
+					var jsonStr = line.slice(6).trim();
+					if (!jsonStr) continue;
+					try {
+						var data = JSON.parse(jsonStr);
+						console.log('SSE event:', data.type);
+						
+						if (data.type === 'answerChunk') {
+							generatedAnswer += data.text;
+							updateSearchAnswer(searchResultsEl, generatedAnswer, true);
+						} else if (data.type === 'sources') {
+							sources = data.sources || [];
+							renderSearchSources($(searchResultsEl), sources);
+						} else if (data.type === 'error') {
+							setError(data.message);
+						} else {
+							handleSearchEvent(data, searchResultsEl, sources, function(text) {
+								generatedAnswer += text;
+								updateSearchAnswer(searchResultsEl, generatedAnswer, true);
+							});
+						}
+					} catch (e) {
+						console.error('Error parsing SSE data:', e, 'Line:', line);
+					}
+				}
+			}
+		};
+		
+		xhr.onload = function() {
+			console.log('XHR complete. Status:', xhr.status);
+			console.log('Total answer length:', generatedAnswer.length);
+			console.log('Response text length:', xhr.responseText.length);
+			
+			// Check for HTTP errors
+			if (xhr.status !== 200) {
+				console.error('HTTP error:', xhr.status, xhr.statusText);
+				setError('Search failed: ' + xhr.status + ' ' + xhr.statusText);
+				return;
+			}
+			
+			// Process any remaining buffer
+			if (buffer.trim()) {
+				var remainingLines = buffer.split('\n\n');
+				for (var i = 0; i < remainingLines.length; i++) {
+					var line = remainingLines[i].trim();
+					if (line.startsWith('data: ')) {
+						try {
+							var data = JSON.parse(line.slice(6).trim());
+							console.log('Processing remaining event:', data.type);
+							if (data.type === 'answerChunk') {
+								generatedAnswer += data.text;
+							} else if (data.type === 'sources' && sources.length === 0) {
+								sources = data.sources || [];
+								renderSearchSources($(searchResultsEl), sources);
+							}
+						} catch (e) {
+							console.error('Error parsing remaining data:', e);
+						}
+					}
+				}
+			}
+			
+			// Final update - remove cursor
+			if (generatedAnswer && searchResultsEl) {
+				console.log('Updating final answer, length:', generatedAnswer.length);
+				updateSearchAnswer(searchResultsEl, generatedAnswer, false);
+				
+				// Add the complete response as an assistant message for history
+				var formattedAnswer = formatSearchAnswerForHistory(generatedAnswer, sources);
+				messagesList.add({ role: 'assistant', content: [formattedAnswer] });
+			} else {
+				console.warn('No answer generated or container missing. Answer:', generatedAnswer.length, 'Container:', !!searchResultsEl);
+				if (!generatedAnswer) {
+					setError('No answer was generated. Please try again.');
+				}
+			}
+			
+			// Mark all steps as complete
+			$(searchResultsEl).find('.search_step').each(function() {
+				$(this).removeClass('pending active').addClass('complete');
+				$(this).find('.search_step_icon').removeClass('pending active').addClass('complete');
+			});
+			
+			console.log('Search completed successfully');
+		};
+		
+		xhr.onerror = function() {
+			console.error('XHR error:', xhr.status, xhr.statusText);
+			console.error('Response:', xhr.responseText);
+			setError('Search failed. Please check your connection and try again.');
+		};
+		
+		xhr.send(JSON.stringify({ query: query }));
+	}
+
+	function createSearchResultsUI() {
+		$('#chat_wrapper').removeClass('empty');
+		
+		var $chat = $('#chat');
+		var index = messagesList.get().length;
+		
+		var $container = $('<div class="message search_results_container" style="order: ' + index + ';">' +
+			'<div class="search_steps">' +
+				'<div class="search_step" data-step="analyze">' +
+					'<span class="search_step_icon pending"></span>' +
+					'<span>Analyzing query...</span>' +
+				'</div>' +
+				'<div class="search_step" data-step="decompose">' +
+					'<span class="search_step_icon pending"></span>' +
+					'<span>Decomposing into sub-queries...</span>' +
+				'</div>' +
+				'<div class="search_step" data-step="search">' +
+					'<span class="search_step_icon pending"></span>' +
+					'<span>Searching & reranking...</span>' +
+				'</div>' +
+				'<div class="search_step" data-step="synthesize">' +
+					'<span class="search_step_icon pending"></span>' +
+					'<span>Synthesizing answer...</span>' +
+				'</div>' +
+			'</div>' +
+			'<div class="search_subqueries"></div>' +
+			'<div class="search_sources"></div>' +
+			'<div class="search_answer" style="display: none;">' +
+				'<div class="search_answer_title">📋 Answer</div>' +
+				'<div class="search_answer_content"></div>' +
+			'</div>' +
+		'</div>');
+		
+		$chat.prepend($container);
+		$chat.scrollTop($chat[0].scrollHeight);
+		
+		return $container[0];
+	}
+
+	function getSearchContainer(container) {
+		// Safely get a jQuery container object
+		if (container && container.jquery) {
+			return container;
+		}
+		if (container && container.nodeType) {
+			return $(container);
+		}
+		// Fallback to last search results container
+		return $('.search_results_container').last();
+	}
+
+	function handleSearchEvent(data, container, sources, onAnswerChunk) {
+		var $container = getSearchContainer(container);
+		
+		if (!$container || !$container.length) {
+			console.error('handleSearchEvent: No valid container found');
+			return;
+		}
+		
+		switch (data.type) {
+			case 'step':
+				updateSearchStep($container, data.step, data.status);
+				break;
+				
+			case 'subQueries':
+				renderSubQueries($container, data.subQueries);
+				break;
+				
+			case 'subQueryStatus':
+				updateSubQueryStatus($container, data.id, data.status, data.resultCount);
+				break;
+				
+			case 'sources':
+				sources.length = 0;
+				for (var i = 0; i < data.sources.length; i++) {
+					sources.push(data.sources[i]);
+				}
+				renderSearchSources($container, sources);
+				break;
+				
+			case 'answerChunk':
+				onAnswerChunk(data.text);
+				break;
+				
+			case 'done':
+				$container.find('.search_step').each(function() {
+					$(this).removeClass('active').addClass('complete');
+					$(this).find('.search_step_icon').removeClass('pending active').addClass('complete');
+				});
+				break;
+				
+			case 'error':
+				setError(data.message);
+				break;
+		}
+		
+		$('#chat').scrollTop($('#chat')[0].scrollHeight);
+	}
+
+	function updateSearchStep($container, stepId, status) {
+		var $step = $container.find('[data-step="' + stepId + '"]');
+		var $icon = $step.find('.search_step_icon');
+		
+		$step.removeClass('pending active complete').addClass(status);
+		$icon.removeClass('pending active complete').addClass(status);
+	}
+
+	function renderSubQueries($container, subQueries) {
+		var $subQueriesEl = $container.find('.search_subqueries');
+		$subQueriesEl.empty();
+		
+		for (var i = 0; i < subQueries.length; i++) {
+			var sq = subQueries[i];
+			$subQueriesEl.append('<div class="search_subquery" data-id="' + sq.id + '">' +
+				'<span class="subquery_status">○</span> ' +
+				sq.query +
+				(sq.intent ? ' <span class="subquery_intent">(' + sq.intent + ')</span>' : '') +
+			'</div>');
+		}
+	}
+
+	function updateSubQueryStatus($container, id, status, resultCount) {
+		var $subQuery = $container.find('.search_subquery[data-id="' + id + '"]');
+		$subQuery.removeClass('pending searching complete').addClass(status);
+		
+		var statusIcon = status === 'complete' ? '✓' : (status === 'searching' ? '●' : '○');
+		$subQuery.find('.subquery_status').text(statusIcon);
+		
+		if (resultCount !== undefined) {
+			$subQuery.append(' <span class="subquery_count">(' + resultCount + ' results)</span>');
+		}
+	}
+
+	function renderSearchSources($container, sources) {
+		var $sourcesEl = $container.find('.search_sources');
+		$sourcesEl.empty();
+		
+		var maxSources = Math.min(sources.length, 8);
+		for (var i = 0; i < maxSources; i++) {
+			var source = sources[i];
+			var $card = $('<div class="search_source_card" data-id="' + source.id + '">' +
+				'<div class="search_source_header">' +
+					'<span class="search_source_badge">' + (i + 1) + '</span>' +
+					'<span class="search_source_title">' + escapeHtml(source.title || source.code || 'Source') + '</span>' +
+					'<span class="search_source_type">' + (source.sourceType || 'DOC') + '</span>' +
+				'</div>' +
+				'<div class="search_source_snippet">' + escapeHtml(source.snippet || (source.fullText ? source.fullText.substring(0, 150) : '')) + '</div>' +
+				'<div class="search_source_expanded">' +
+					'<div class="search_source_fulltext">' + escapeHtml(source.fullText || '') + '</div>' +
+					(source.sourceUrl ? '<a href="' + source.sourceUrl + '" target="_blank" class="search_source_link">View source →</a>' : '') +
+				'</div>' +
+			'</div>');
+			
+			$card.on('click', function() {
+				$(this).toggleClass('expanded');
+			});
+			
+			$sourcesEl.append($card);
+		}
+	}
+
+	function updateSearchAnswer(container, answer, showCursor) {
+		var $container = getSearchContainer(container);
+		
+		if (!$container || !$container.length) {
+			console.error('updateSearchAnswer: No valid container found');
+			return;
+		}
+		
+		var $answerEl = $container.find('.search_answer');
+		var $contentEl = $answerEl.find('.search_answer_content');
+		
+		console.log('updateSearchAnswer called, answer length:', answer.length, 'found answer el:', $answerEl.length);
+		
+		if ($answerEl.length === 0) {
+			console.error('Could not find .search_answer element');
+			return;
+		}
+		
+		// Ensure the answer section is visible
+		$answerEl.css('display', 'block');
+		$answerEl.show();
+		
+		var formattedAnswer = formatAnswerWithCitations(answer);
+		if (showCursor) {
+			formattedAnswer += '<span class="search_cursor"></span>';
+		}
+		
+		$contentEl.html(formattedAnswer);
+		
+		// Also update the synthesize step to show it's active
+		var $synthesizeStep = $container.find('[data-step="synthesize"]');
+		if ($synthesizeStep.length) {
+			$synthesizeStep.removeClass('pending').addClass('active');
+			$synthesizeStep.find('.search_step_icon').removeClass('pending').addClass('active');
+		}
+		
+		// Scroll to show answer
+		var $chat = $('#chat');
+		$chat.scrollTop($chat[0].scrollHeight);
+		
+		// Also update scrollbar
+		if (scrollbarList) {
+			scrollbarList.update();
+		}
+	}
+
+	function formatAnswerWithCitations(text) {
+		var formatted = text.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+		formatted = formatted.replace(/\[(\d+)\]/g, '<span class="citation">$1</span>');
+		formatted = formatted.replace(/\n/g, '<br>');
+		return formatted;
+	}
+
+	function formatSearchAnswerForHistory(answer, sources) {
+		var result = answer + '\n\n---\n**Sources:**\n';
+		var maxSources = Math.min(sources.length, 8);
+		for (var i = 0; i < maxSources; i++) {
+			var source = sources[i];
+			result += '[' + (i + 1) + '] ' + (source.title || source.code || 'Source') + '\n';
+		}
+		return result;
+	}
+
+	function escapeHtml(text) {
+		if (!text) return '';
+		var div = document.createElement('div');
+		div.textContent = text;
+		return div.innerHTML;
+	}
 
 	function updateStartPanel() {
 		updateWelcomeText();

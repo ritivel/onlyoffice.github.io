@@ -719,6 +719,10 @@ class Provider extends AI.Provider {\n\
 	}
 
 	await initWithTranslate(1 << 1);
+	// Auto-open Copilot panel by default for word editor (don't depend on onTranslate firing)
+	if (Asc.Editor.getType() === "word") {
+		onOpenCopilotModal();
+	}
 	clearChatState();
 
 	window.setInit();

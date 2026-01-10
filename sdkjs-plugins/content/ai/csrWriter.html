@@ -41,30 +41,30 @@
 	<link rel="stylesheet" href="./resources/styles/common.css">
 	<link rel="stylesheet" href="./resources/styles/csrWriter.css">
 	<style>
-		/* Inline styles to ensure proper rendering */
+		/* Inline styles to ensure proper rendering - Ritivel Lavender Theme */
 		:root {
-			--csr-primary: #4a90d9;
-			--csr-primary-hover: #3a7bc8;
-			--csr-accent: #10b981;
+			--csr-primary: #9370DB;
+			--csr-primary-hover: #8A2BE2;
+			--csr-accent: #A78BFA;
 			--csr-text: #1f2937;
 			--csr-text-secondary: #6b7280;
 			--csr-text-muted: #9ca3af;
 			--csr-bg: #ffffff;
-			--csr-bg-secondary: #f9fafb;
-			--csr-bg-tertiary: #f3f4f6;
-			--csr-border: #e5e7eb;
+			--csr-bg-secondary: #F5F0FF;
+			--csr-bg-tertiary: #E6E6FA;
+			--csr-border: #DCD0FF;
 		}
 		body.theme-dark, body.theme-contrast-dark {
-			--csr-primary: #60a5fa;
-			--csr-primary-hover: #3b82f6;
-			--csr-accent: #34d399;
+			--csr-primary: #A78BFA;
+			--csr-primary-hover: #9370DB;
+			--csr-accent: #C4B5FD;
 			--csr-text: #f9fafb;
 			--csr-text-secondary: #d1d5db;
 			--csr-text-muted: #9ca3af;
-			--csr-bg: #1f2937;
-			--csr-bg-secondary: #111827;
-			--csr-bg-tertiary: #374151;
-			--csr-border: #4b5563;
+			--csr-bg: #1f1b2e;
+			--csr-bg-secondary: #2d2640;
+			--csr-bg-tertiary: #3d3555;
+			--csr-border: #5b4f7a;
 		}
 		.csr-writer-container {
 			display: flex;
@@ -79,7 +79,7 @@
 			align-items: center;
 			gap: 12px;
 			padding: 16px 20px;
-			background: linear-gradient(135deg, var(--csr-primary) 0%, var(--csr-primary-hover) 100%);
+			background: linear-gradient(135deg, #9370DB 0%, #8A2BE2 100%);
 			color: #fff;
 		}
 		.csr-header-icon {
@@ -201,12 +201,12 @@
 		.csr-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 		.csr-btn-primary {
 			color: #fff;
-			background: linear-gradient(135deg, var(--csr-primary) 0%, var(--csr-primary-hover) 100%);
-			box-shadow: 0 4px 12px rgba(74, 144, 217, 0.3);
+			background: linear-gradient(135deg, #9370DB 0%, #8A2BE2 100%);
+			box-shadow: 0 4px 12px rgba(147, 112, 219, 0.3);
 		}
 		.csr-btn-primary:hover:not(:disabled) {
 			transform: translateY(-1px);
-			box-shadow: 0 6px 16px rgba(74, 144, 217, 0.4);
+			box-shadow: 0 6px 16px rgba(147, 112, 219, 0.4);
 		}
 		.csr-btn-primary svg { stroke: #fff; }
 		.csr-footer {
@@ -231,7 +231,7 @@
 		.csr-progress-fill {
 			height: 100%;
 			width: 0%;
-			background: linear-gradient(90deg, var(--csr-primary), var(--csr-accent));
+			background: linear-gradient(90deg, #9370DB, #C8A2C8);
 			border-radius: 3px;
 			transition: width 0.3s;
 		}
@@ -325,7 +325,7 @@
 		}
 		.csr-query-input-wrapper:focus-within {
 			border-color: var(--csr-primary);
-			box-shadow: 0 0 0 3px rgba(74, 144, 217, 0.15);
+			box-shadow: 0 0 0 3px rgba(147, 112, 219, 0.15);
 		}
 		.csr-query-input {
 			flex: 1;
@@ -348,7 +348,7 @@
 			justify-content: center;
 			width: 40px;
 			height: 40px;
-			background: linear-gradient(135deg, var(--csr-primary) 0%, var(--csr-primary-hover) 100%);
+			background: linear-gradient(135deg, #9370DB 0%, #8A2BE2 100%);
 			color: #fff;
 			border: none;
 			border-radius: 8px;
@@ -359,7 +359,7 @@
 		}
 		.csr-query-submit:hover:not(:disabled) {
 			transform: scale(1.05);
-			box-shadow: 0 4px 12px rgba(74, 144, 217, 0.3);
+			box-shadow: 0 4px 12px rgba(147, 112, 219, 0.3);
 		}
 		.csr-query-submit:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
 		.csr-query-submit svg { stroke: #fff; }
@@ -375,14 +375,14 @@
 			padding: 6px 12px;
 			font-size: 12px;
 			color: var(--csr-primary);
-			background: rgba(74, 144, 217, 0.1);
-			border: 1px solid rgba(74, 144, 217, 0.2);
+			background: rgba(147, 112, 219, 0.1);
+			border: 1px solid rgba(147, 112, 219, 0.2);
 			border-radius: 16px;
 			cursor: pointer;
 			transition: all 0.2s;
 		}
 		.csr-suggestion-chip:hover {
-			background: rgba(74, 144, 217, 0.2);
+			background: rgba(147, 112, 219, 0.2);
 			border-color: var(--csr-primary);
 		}
 		
@@ -472,11 +472,11 @@
 			justify-content: center;
 			width: 28px;
 			height: 28px;
-			background: rgba(74, 144, 217, 0.1);
+			background: rgba(147, 112, 219, 0.1);
 			border-radius: 6px;
 			flex-shrink: 0;
 		}
-		.csr-source-icon.protocol { background: rgba(74, 144, 217, 0.1); }
+		.csr-source-icon.protocol { background: rgba(147, 112, 219, 0.1); }
 		.csr-source-icon.protocol svg { stroke: var(--csr-primary); }
 		.csr-source-icon.sap { background: rgba(16, 185, 129, 0.1); }
 		.csr-source-icon.sap svg { stroke: var(--csr-accent); }
@@ -519,17 +519,17 @@
 		.csr-action-btn:hover {
 			color: var(--csr-primary);
 			border-color: var(--csr-primary);
-			background: rgba(74, 144, 217, 0.05);
+			background: rgba(147, 112, 219, 0.05);
 		}
 		.csr-action-btn svg { stroke: currentColor; }
 		.csr-action-btn.csr-action-primary {
 			color: #fff;
-			background: linear-gradient(135deg, var(--csr-primary) 0%, var(--csr-primary-hover) 100%);
+			background: linear-gradient(135deg, #9370DB 0%, #8A2BE2 100%);
 			border-color: var(--csr-primary);
 		}
 		.csr-action-btn.csr-action-primary:hover {
 			color: #fff;
-			box-shadow: 0 4px 12px rgba(74, 144, 217, 0.3);
+			box-shadow: 0 4px 12px rgba(147, 112, 219, 0.3);
 			transform: translateY(-1px);
 		}
 		.csr-action-btn.csr-action-primary svg { stroke: #fff; }
@@ -580,8 +580,8 @@
 				</svg>
 			</div>
 			<div class="csr-header-content">
-				<h1 class="csr-title i18n">CSR Writer Agent</h1>
-				<p class="csr-subtitle i18n">Clinical Study Report Assistant</p>
+				<h1 class="csr-title i18n">Ritivel CSR Writer</h1>
+				<p class="csr-subtitle i18n">Regulatory AI • Clinical Study Reports</p>
 			</div>
 		</div>
 
@@ -781,7 +781,7 @@
 
 		<!-- Footer -->
 		<div class="csr-footer">
-			<span class="csr-footer-text i18n">Powered by AI</span>
+			<span class="csr-footer-text i18n">Powered by Ritivel</span>
 		</div>
 	</div>
 

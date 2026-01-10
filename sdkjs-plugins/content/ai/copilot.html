@@ -1,0 +1,176 @@
+<!--
+ (c) Copyright Ascensio System SIA 2010-2025
+ AI Copilot - Cursor-like Interface
+-->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="UTF-8" />
+	<meta http-equiv="X-UA-Compatible" content="IE=edge,chrome=1">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<title>AI Copilot</title>
+	<script type="text/javascript" src="https://onlyoffice.github.io/sdkjs-plugins/v1/plugins.js"></script>
+	<script type="text/javascript" src="https://onlyoffice.github.io/sdkjs-plugins/v1/plugins-ui.js"></script>
+	<script src="vendor/jquery/jquery-3.7.1.min.js"></script>
+	<script src="vendor/md/markdown-it.js"></script>
+	<link rel="stylesheet" href="https://onlyoffice.github.io/sdkjs-plugins/v1/plugins.css">
+	<link rel="stylesheet" href="./resources/styles/common.css">
+	<link rel="stylesheet" href="./resources/styles/copilot.css">
+</head>
+<body class="copilot-body">
+	<div class="copilot-app">
+		<!-- Sidebar - Chat History -->
+		<aside class="copilot-sidebar" id="sidebar">
+			<div class="sidebar-header">
+				<button class="sidebar-toggle" id="sidebarToggle" title="Toggle sidebar">
+					<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+						<rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
+						<line x1="9" y1="3" x2="9" y2="21"/>
+					</svg>
+				</button>
+				<span class="sidebar-title">Chats</span>
+				<button class="new-chat-btn" id="newChatBtn" title="New chat">
+					<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+						<line x1="12" y1="5" x2="12" y2="19"/>
+						<line x1="5" y1="12" x2="19" y2="12"/>
+					</svg>
+				</button>
+			</div>
+			<div class="sidebar-content">
+				<div class="chat-list" id="chatList">
+					<!-- Chat history items will be inserted here -->
+				</div>
+			</div>
+		</aside>
+
+		<!-- Main Content -->
+		<main class="copilot-main">
+			<!-- Header -->
+			<header class="copilot-header">
+				<div class="header-left">
+					<button class="mobile-sidebar-toggle" id="mobileSidebarToggle">
+						<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+							<line x1="3" y1="12" x2="21" y2="12"/>
+							<line x1="3" y1="6" x2="21" y2="6"/>
+							<line x1="3" y1="18" x2="21" y2="18"/>
+						</svg>
+					</button>
+					<span class="header-title" id="chatTitle">New Chat</span>
+				</div>
+				<div class="header-right">
+					<button class="header-btn" id="clearChatBtn" title="Clear chat">
+						<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+							<polyline points="3 6 5 6 21 6"/>
+							<path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+						</svg>
+					</button>
+				</div>
+			</header>
+
+			<!-- Messages Area -->
+			<div class="messages-container" id="messagesContainer">
+				<!-- Welcome Screen -->
+				<div class="welcome-screen" id="welcomeScreen">
+					<div class="welcome-icon">
+						<svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+							<path d="M12 2L2 7l10 5 10-5-10-5z"/>
+							<path d="M2 17l10 5 10-5"/>
+							<path d="M2 12l10 5 10-5"/>
+						</svg>
+					</div>
+					<h2 class="welcome-title">AI Copilot</h2>
+					<p class="welcome-subtitle">Your intelligent document assistant</p>
+					<div class="quick-actions">
+						<button class="quick-action" data-prompt="Summarize this document">
+							<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+								<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+								<polyline points="14 2 14 8 20 8"/>
+								<line x1="16" y1="13" x2="8" y2="13"/>
+								<line x1="16" y1="17" x2="8" y2="17"/>
+							</svg>
+							Summarize document
+						</button>
+						<button class="quick-action" data-prompt="Explain the selected text">
+							<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+								<circle cx="12" cy="12" r="10"/>
+								<path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/>
+								<line x1="12" y1="17" x2="12.01" y2="17"/>
+							</svg>
+							Explain selection
+						</button>
+						<button class="quick-action" data-prompt="Help me draft a new section">
+							<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+								<path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
+								<path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
+							</svg>
+							Draft new section
+						</button>
+						<button class="quick-action" data-prompt="Fill in the template fields">
+							<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+								<rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
+								<line x1="3" y1="9" x2="21" y2="9"/>
+								<line x1="9" y1="21" x2="9" y2="9"/>
+							</svg>
+							Fill template
+						</button>
+					</div>
+				</div>
+				<!-- Messages will be inserted here -->
+				<div class="messages" id="messages"></div>
+			</div>
+
+			<!-- Input Area -->
+			<div class="input-area">
+				<!-- Mode Switcher -->
+				<div class="mode-switcher">
+					<button class="mode-btn active" data-mode="ask" id="askModeBtn">
+						<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+							<circle cx="12" cy="12" r="10"/>
+							<path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/>
+							<line x1="12" y1="17" x2="12.01" y2="17"/>
+						</svg>
+						Ask
+					</button>
+					<button class="mode-btn" data-mode="agent" id="agentModeBtn">
+						<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+							<path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/>
+						</svg>
+						Agent
+					</button>
+				</div>
+
+				<!-- Input Container -->
+				<div class="input-container">
+					<div class="input-wrapper">
+						<textarea 
+							id="chatInput" 
+							class="chat-input" 
+							placeholder="Ask anything about your document..."
+							rows="1"
+						></textarea>
+						<div class="input-actions">
+							<button class="send-btn" id="sendBtn" title="Send message">
+								<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+									<line x1="22" y1="2" x2="11" y2="13"/>
+									<polygon points="22 2 15 22 11 13 2 9 22 2"/>
+								</svg>
+							</button>
+							<button class="stop-btn hidden" id="stopBtn" title="Stop generating">
+								<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
+									<rect x="6" y="6" width="12" height="12" rx="2"/>
+								</svg>
+							</button>
+						</div>
+					</div>
+					<div class="input-hint">
+						<span>Press Enter to send, Shift+Enter for new line</span>
+						<span class="mode-indicator" id="modeIndicator">Ask mode</span>
+					</div>
+				</div>
+			</div>
+		</main>
+	</div>
+
+	<script type="text/javascript" src="./scripts/copilot.js"></script>
+</body>
+</html>

@@ -4,36 +4,36 @@
  * CSR Writer Agent Styles
  */
 
-/* CSS Variables for theming */
+/* CSS Variables for theming - Ritivel Lavender Theme */
 :root {
-	--csr-primary-color: #4a90d9;
-	--csr-primary-hover: #3a7bc8;
-	--csr-accent-color: #10b981;
+	--csr-primary-color: #9370DB;
+	--csr-primary-hover: #8A2BE2;
+	--csr-accent-color: #A78BFA;
 	--csr-text-primary: #1f2937;
 	--csr-text-secondary: #6b7280;
 	--csr-text-muted: #9ca3af;
 	--csr-bg-primary: #ffffff;
-	--csr-bg-secondary: #f9fafb;
-	--csr-bg-tertiary: #f3f4f6;
-	--csr-border-color: #e5e7eb;
+	--csr-bg-secondary: #F5F0FF;
+	--csr-bg-tertiary: #E6E6FA;
+	--csr-border-color: #DCD0FF;
 	--csr-border-radius: 8px;
-	--csr-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
-	--csr-shadow-lg: 0 4px 6px rgba(0, 0, 0, 0.1);
+	--csr-shadow: 0 1px 3px rgba(147, 112, 219, 0.1);
+	--csr-shadow-lg: 0 4px 6px rgba(147, 112, 219, 0.15);
 }
 
 /* Dark theme overrides */
 body.theme-dark,
 body.theme-contrast-dark {
-	--csr-primary-color: #60a5fa;
-	--csr-primary-hover: #3b82f6;
-	--csr-accent-color: #34d399;
+	--csr-primary-color: #A78BFA;
+	--csr-primary-hover: #9370DB;
+	--csr-accent-color: #C4B5FD;
 	--csr-text-primary: #f9fafb;
 	--csr-text-secondary: #d1d5db;
 	--csr-text-muted: #9ca3af;
-	--csr-bg-primary: #1f2937;
-	--csr-bg-secondary: #111827;
-	--csr-bg-tertiary: #374151;
-	--csr-border-color: #4b5563;
+	--csr-bg-primary: #1f1b2e;
+	--csr-bg-secondary: #2d2640;
+	--csr-bg-tertiary: #3d3555;
+	--csr-border-color: #5b4f7a;
 	--csr-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
 	--csr-shadow-lg: 0 4px 6px rgba(0, 0, 0, 0.3);
 }
@@ -55,7 +55,7 @@ body.theme-contrast-dark {
 	align-items: center;
 	gap: 12px;
 	padding: 16px 20px;
-	background: linear-gradient(135deg, var(--csr-primary-color) 0%, var(--csr-primary-hover) 100%);
+	background: linear-gradient(135deg, #9370DB 0%, #8A2BE2 100%);
 	color: #ffffff;
 	flex-shrink: 0;
 }
@@ -422,7 +422,7 @@ body.theme-contrast-dark .csr-file-error {
 .csr-progress-fill {
 	height: 100%;
 	width: 0%;
-	background: linear-gradient(90deg, var(--csr-primary-color), var(--csr-accent-color));
+	background: linear-gradient(90deg, #9370DB, #C8A2C8);
 	border-radius: 3px;
 	transition: width 0.3s ease;
 	animation: progress-pulse 1.5s ease-in-out infinite;
@@ -608,7 +608,7 @@ body.theme-contrast-dark .csr-index-error {
 
 .csr-query-input-wrapper:focus-within {
 	border-color: var(--csr-primary-color);
-	box-shadow: 0 0 0 3px rgba(74, 144, 217, 0.15);
+	box-shadow: 0 0 0 3px rgba(147, 112, 219, 0.15);
 }
 
 .csr-query-input {
@@ -636,7 +636,7 @@ body.theme-contrast-dark .csr-index-error {
 	justify-content: center;
 	width: 40px;
 	height: 40px;
-	background: linear-gradient(135deg, var(--csr-primary-color) 0%, var(--csr-primary-hover) 100%);
+	background: linear-gradient(135deg, #9370DB 0%, #8A2BE2 100%);
 	color: #ffffff;
 	border: none;
 	border-radius: 8px;
@@ -648,7 +648,7 @@ body.theme-contrast-dark .csr-index-error {
 
 .csr-query-submit:hover:not(:disabled) {
 	transform: scale(1.05);
-	box-shadow: 0 4px 12px rgba(74, 144, 217, 0.3);
+	box-shadow: 0 4px 12px rgba(147, 112, 219, 0.3);
 }
 
 .csr-query-submit:disabled {
@@ -673,15 +673,15 @@ body.theme-contrast-dark .csr-index-error {
 	padding: 6px 12px;
 	font-size: 12px;
 	color: var(--csr-primary-color);
-	background: rgba(74, 144, 217, 0.1);
-	border: 1px solid rgba(74, 144, 217, 0.2);
+	background: rgba(147, 112, 219, 0.1);
+	border: 1px solid rgba(147, 112, 219, 0.2);
 	border-radius: 16px;
 	cursor: pointer;
 	transition: all 0.2s;
 }
 
 .csr-suggestion-chip:hover {
-	background: rgba(74, 144, 217, 0.2);
+	background: rgba(147, 112, 219, 0.2);
 	border-color: var(--csr-primary-color);
 }
 
@@ -813,13 +813,13 @@ body.theme-contrast-dark .csr-index-error {
 	justify-content: center;
 	width: 28px;
 	height: 28px;
-	background: rgba(74, 144, 217, 0.1);
+	background: rgba(147, 112, 219, 0.1);
 	border-radius: 6px;
 	flex-shrink: 0;
 }
 
 .csr-source-icon.protocol {
-	background: rgba(74, 144, 217, 0.1);
+	background: rgba(147, 112, 219, 0.1);
 }
 
 .csr-source-icon.protocol svg {
@@ -880,7 +880,7 @@ body.theme-contrast-dark .csr-index-error {
 .csr-action-btn:hover {
 	color: var(--csr-primary-color);
 	border-color: var(--csr-primary-color);
-	background: rgba(74, 144, 217, 0.05);
+	background: rgba(147, 112, 219, 0.05);
 }
 
 .csr-action-btn svg {
@@ -890,13 +890,13 @@ body.theme-contrast-dark .csr-index-error {
 /* Primary action button */
 .csr-action-btn.csr-action-primary {
 	color: #ffffff;
-	background: linear-gradient(135deg, var(--csr-primary-color) 0%, var(--csr-primary-hover) 100%);
+	background: linear-gradient(135deg, #9370DB 0%, #8A2BE2 100%);
 	border-color: var(--csr-primary-color);
 }
 
 .csr-action-btn.csr-action-primary:hover {
 	color: #ffffff;
-	box-shadow: 0 4px 12px rgba(74, 144, 217, 0.3);
+	box-shadow: 0 4px 12px rgba(147, 112, 219, 0.3);
 	transform: translateY(-1px);
 }
 

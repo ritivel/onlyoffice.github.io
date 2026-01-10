@@ -38,6 +38,7 @@ let summarizationWindow = null;
 let translateSettingsWindow = null;
 let helperWindow = null;
 let csrWriterWindow = null;
+let copilotWindow = null;
 
 let spellchecker = null;
 let grammar = null;
@@ -1180,4 +1181,57 @@ function onOpenCSRWriterModal() {
 	});
 
 	csrWriterWindow.show(variation);
+}
+
+/**
+ * AI COPILOT WINDOW
+ */
+function onOpenCopilotModal() {
+	// Force right-side panel (clear any cached left placement)
+	// Valid values: "panelRight" (right side), "panel" (left side), "window" (floating)
+	let variation = {
+		url : 'copilot.html',
+		description : window.Asc.plugin.tr('AI Copilot'),
+		isVisual : true,
+		buttons : [],
+		icons: "resources/icons/%theme-name%(theme-default|theme-system|theme-classic-light)/%theme-type%(light|dark)/copilot%state%(normal|active)%scale%(default).png",
+		isModal : false,
+		isCanDocked: true,
+		type: "panelRight",
+		EditorsSupport : ["word"],
+		size : [380, 600],
+		minSize: [380, 600],
+		maxSize: [600, 800]
+	};
+
+	if (copilotWindow) {
+		copilotWindow.activate();
+		return;
+	}
+
+	copilotWindow = new window.Asc.PluginWindow();
+
+	copilotWindow.attachEvent("onWindowReady", function() {
+		// Parameters: [windowId, [width, height], [minWidth, minHeight], [maxWidth, maxHeight]]
+		// Use same values for size and min to ensure proper panel expansion on the right pane
+		Asc.Editor.callMethod("ResizeWindow", [copilotWindow.id, [380, 600], [380, 600], [600, 800]]);
+	});
+
+	copilotWindow.attachEvent("onDockedChanged", async function(type) {
+		window.localStorage.setItem("onlyoffice_ai_copilot_placement", type);
+
+		async function waitSaveSettings() {
+			return new Promise(resolve => (function(){
+				copilotWindow.attachEvent("onUpdateState", function(type) {
+					resolve();
+				});
+				copilotWindow.command("onUpdateState");
+			})());
+		};
+		
+		await waitSaveSettings();
+		Asc.Editor.callMethod("OnWindowDockChangedCallback", [copilotWindow.id]);
+	});
+
+	copilotWindow.show(variation);
 }

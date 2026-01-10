@@ -3,11 +3,16 @@ html, body {
     margin: 0px;
     padding: 0px;
     overflow: hidden;
-    width:100%;
-    height:100%;
+    width: 100%;
+    height: 100%;
+    position: relative;
 }
 body {
     padding: 15px;
+}
+/* Remove padding for copilot page which uses its own full-width layout */
+body.copilot-body {
+    padding: 0;
 }
 
 body, body.theme-light, body.theme-classic-light, body.theme-gray {

@@ -11,7 +11,7 @@
 	// ============================================
 	var Config = {
 		// Backend URL - change this to your deployed backend
-		BACKEND_URL: 'http://localhost:8000',
+		BACKEND_URL: 'http://98.83.138.45:8000',
 		// Set to true to use dummy responses instead of real backend
 		USE_DUMMY: false
 	};
@@ -61,6 +61,10 @@
 	// TOOL EXECUTOR (Frontend Tools)
 	// ============================================
 	var ToolExecutor = {
+		mmToEmu: function(mm) {
+			// 1 inch = 25.4 mm; 1 inch = 914400 EMU
+			return Math.round((mm * 914400) / 25.4);
+		},
 		tools: {
 			'get_selected_text': async function() {
 				// Try to get selected text from OnlyOffice
@@ -80,15 +84,20 @@
 					return new Promise(function(resolve) {
 						window.Asc.plugin.callCommand(function() {
 							var doc = Api.GetDocument();
-							var text = '';
-							var count = doc.GetElementsCount();
-							for (var i = 0; i < count; i++) {
-								var elem = doc.GetElement(i);
-								if (elem.GetClassType && elem.GetClassType() === 'paragraph') {
-									text += elem.GetText() + '\n';
-								}
+							var maxLen = (params && params.max_length) ? params.max_length : 50000;
+							var format = (params && params.format) ? params.format : 'markdown';
+							if (format === 'plain') {
+								var text = doc.GetText ? doc.GetText({ ParaSeparator: '\n', NewLineSeparator: '\n' }) : '';
+								return (text || '').substring(0, maxLen);
 							}
-							return text.substring(0, params.max_length || 50000);
+							// Prefer markdown: preserves headings/tables better for agents.
+							var md = doc.ToMarkdown ? doc.ToMarkdown(
+								!!(params && params.html_headings),
+								!!(params && params.base64img),
+								!!(params && params.demote_headings),
+								!!(params && params.render_html_tags)
+							) : '';
+							return (md || '').substring(0, maxLen);
 						}, false, false, resolve);
 					});
 				}
@@ -123,81 +132,567 @@
 			},
 			
 			'search_document': async function(params) {
-				// Simplified search - in real implementation use OnlyOffice search API
-				return [{ text: 'Search not implemented', context: '', position: 0 }];
-			},
-			
-			'insert_text': async function(params) {
-				if (window.Asc && window.Asc.plugin && window.Asc.plugin.executeMethod) {
-					var text = params.text;
-					var format = params.format || 'markdown';
-					
-					if (format === 'html' || format === 'markdown') {
-						// Convert markdown to HTML if needed
-						var html = format === 'markdown' ? markdownToHtml(text) : text;
-						return new Promise(function(resolve) {
-							window.Asc.plugin.executeMethod('PasteHtml', [html], function() {
-								resolve({ success: true, message: 'Text inserted' });
-							});
-						});
-					} else {
-						return new Promise(function(resolve) {
-							window.Asc.plugin.executeMethod('PasteText', [text], function() {
-								resolve({ success: true, message: 'Text inserted' });
-							});
-						});
-					}
-				}
-				return { success: false, error: 'Not in OnlyOffice environment' };
-			},
-			
-			'replace_selection': async function(params) {
-				// In OnlyOffice, replace selection is done by pasting over selection
-				return ToolExecutor.tools['insert_text'](params);
-			},
-			
-			'get_content_controls': async function() {
 				if (window.Asc && window.Asc.plugin && window.Asc.plugin.callCommand) {
 					return new Promise(function(resolve) {
 						window.Asc.plugin.callCommand(function() {
+							var query = params && params.query ? String(params.query) : '';
+							var maxResults = (params && params.max_results) ? params.max_results : 10;
+							var matchCase = !!(params && params.match_case);
+							if (!query) {
+								return { total: 0, results: [] };
+							}
 							var doc = Api.GetDocument();
-							var controls = doc.GetAllContentControls();
-							var result = [];
-							for (var i = 0; i < controls.length; i++) {
-								var cc = controls[i];
-								result.push({
-									tag: cc.GetTag() || '',
-									title: cc.GetLabel() || '',
-									value: cc.GetText() || ''
+							var ranges = doc.Search ? doc.Search(query, matchCase) : [];
+							var results = [];
+							var count = Math.min(maxResults, ranges.length);
+							for (var i = 0; i < count; i++) {
+								var r = ranges[i];
+								var fullText = r && r.GetText ? r.GetText({ ParaSeparator: '\n', NewLineSeparator: '\n' }) : '';
+								results.push({
+									index: i,
+									text: (fullText || '').substring(0, 400),
+									length: (fullText || '').length
 								});
 							}
-							return result;
+							return { total: ranges.length, results: results };
 						}, false, false, resolve);
 					});
 				}
-				return [];
+				return { total: 0, results: [], error: 'Not in OnlyOffice environment' };
 			},
-			
-			'fill_content_control': async function(params) {
+
+			'select_search_result': async function(params) {
 				if (window.Asc && window.Asc.plugin && window.Asc.plugin.callCommand) {
 					return new Promise(function(resolve) {
 						window.Asc.plugin.callCommand(function() {
-							var doc = Api.GetDocument();
-							var controls = doc.GetAllContentControls();
-							for (var i = 0; i < controls.length; i++) {
-								var cc = controls[i];
-								if (cc.GetTag() === params.tag) {
-									// Select the content control and set text
-									cc.SetText(params.value);
-									return { success: true, message: 'Content control filled' };
-								}
+							var query = params && params.query ? String(params.query) : '';
+							var idx = (params && typeof params.result_index === 'number') ? params.result_index : 0;
+							var matchCase = !!(params && params.match_case);
+							if (!query) {
+								return { success: false, error: 'query is required' };
 							}
-							return { success: false, error: 'Content control not found' };
-						}, false, false, resolve);
+							var doc = Api.GetDocument();
+							var ranges = doc.Search ? doc.Search(query, matchCase) : [];
+							if (!ranges || idx < 0 || idx >= ranges.length) {
+								return { success: false, error: 'result_index out of range', total: ranges ? ranges.length : 0 };
+							}
+							var r = ranges[idx];
+							if (r && r.Select) r.Select(true);
+							if (r && r.MoveCursorToPos) r.MoveCursorToPos(0);
+							var selected = r && r.GetText ? r.GetText({ ParaSeparator: '\n', NewLineSeparator: '\n' }) : '';
+							return { success: true, selected_text: selected, total: ranges.length, result_index: idx };
+						}, true, false, resolve);
 					});
 				}
 				return { success: false, error: 'Not in OnlyOffice environment' };
 			},
+
+			'get_page_info': async function() {
+				if (window.Asc && window.Asc.plugin && window.Asc.plugin.callCommand) {
+					return new Promise(function(resolve) {
+						window.Asc.plugin.callCommand(function() {
+							var doc = Api.GetDocument();
+							var pageIndex = doc.GetCurrentPage ? doc.GetCurrentPage() : 0; // 0-based
+							var pageCount = doc.GetPageCount ? doc.GetPageCount() : 0;
+							return {
+								page_index: pageIndex,
+								page_number: pageIndex + 1,
+								page_count: pageCount
+							};
+						}, false, false, resolve);
+					});
+				}
+				return { page_index: 0, page_number: 1, page_count: 0, error: 'Not in OnlyOffice environment' };
+			},
+
+			'get_current_paragraph': async function() {
+				if (window.Asc && window.Asc.plugin && window.Asc.plugin.callCommand) {
+					return new Promise(function(resolve) {
+						window.Asc.plugin.callCommand(function() {
+							var doc = Api.GetDocument();
+							var para = doc.GetCurrentParagraph ? doc.GetCurrentParagraph() : null;
+							var text = para && para.GetText ? para.GetText({ NewLineSeparator: '\n' }) : '';
+							var styleName = '';
+							try {
+								var style = para && para.GetStyle ? para.GetStyle() : null;
+								styleName = style && style.GetName ? style.GetName() : '';
+							} catch (e) {}
+							return { text: text, style: styleName };
+						}, false, false, resolve);
+					});
+				}
+				return { text: '', error: 'Not in OnlyOffice environment' };
+			},
+
+			'go_to_page': async function(params) {
+				if (window.Asc && window.Asc.plugin && window.Asc.plugin.callCommand) {
+					return new Promise(function(resolve) {
+						window.Asc.plugin.callCommand(function() {
+							var pageNumber = (params && params.page_number) ? params.page_number : 1;
+							var idx = Math.max(0, Number(pageNumber) - 1);
+							var doc = Api.GetDocument();
+							var ok = doc.GoToPage ? doc.GoToPage(idx) : false;
+							return { success: !!ok, page_number: idx + 1 };
+						}, true, false, resolve);
+					});
+				}
+				return { success: false, error: 'Not in OnlyOffice environment' };
+			},
+
+			'go_to_bookmark': async function(params) {
+				if (window.Asc && window.Asc.plugin && window.Asc.plugin.callCommand) {
+					return new Promise(function(resolve) {
+						window.Asc.plugin.callCommand(function() {
+							var name = params && params.name ? String(params.name) : '';
+							if (!name) return { success: false, error: 'name is required' };
+							var doc = Api.GetDocument();
+							var ok = doc.GoToBookmark ? doc.GoToBookmark(name) : false;
+							return { success: !!ok, name: name };
+						}, true, false, resolve);
+					});
+				}
+				return { success: false, error: 'Not in OnlyOffice environment' };
+			},
+
+			'insert_page_break': async function() {
+				if (window.Asc && window.Asc.plugin && window.Asc.plugin.callCommand) {
+					return new Promise(function(resolve) {
+						window.Asc.plugin.callCommand(function() {
+							var doc = Api.GetDocument();
+							var para = doc.GetCurrentParagraph ? doc.GetCurrentParagraph() : null;
+							if (para && para.AddPageBreak) {
+								para.AddPageBreak();
+								return { success: true };
+							}
+							return { success: false, error: 'AddPageBreak not available' };
+						}, true, false, resolve);
+					});
+				}
+				return { success: false, error: 'Not in OnlyOffice environment' };
+			},
+
+			'insert_table': async function(params) {
+				if (window.Asc && window.Asc.plugin && window.Asc.plugin.callCommand) {
+					var self = this;
+					return new Promise(function(resolve) {
+						window.Asc.plugin.callCommand(function() {
+							var rows = params && params.rows ? Number(params.rows) : 1;
+							var cols = params && params.cols ? Number(params.cols) : 1;
+							if (rows <= 0 || cols <= 0) {
+								return { success: false, error: 'rows and cols must be positive' };
+							}
+							var table = Api.CreateTable ? Api.CreateTable(cols, rows) : null;
+							if (!table) return { success: false, error: 'CreateTable failed' };
+							var doc = Api.GetDocument();
+							var para = doc.GetCurrentParagraph ? doc.GetCurrentParagraph() : null;
+							if (para && para.Push) {
+								para.Push(table);
+							} else {
+								return { success: false, error: 'Could not insert table at cursor' };
+							}
+
+							// Fill data if provided
+							var data = (params && params.data) ? params.data : null;
+							if (data && table.GetCell) {
+								for (var r = 0; r < rows; r++) {
+									for (var c = 0; c < cols; c++) {
+										var value = (data[r] && typeof data[r][c] !== 'undefined') ? String(data[r][c]) : '';
+										if (!value) continue;
+										var cell = table.GetCell(r, c);
+										if (cell && cell.GetContent) {
+											var content = cell.GetContent();
+											if (content && content.RemoveAllElements) content.RemoveAllElements();
+											var p = Api.CreateParagraph ? Api.CreateParagraph() : null;
+											if (p && p.AddText) p.AddText(value);
+											if (content && content.Push && p) content.Push(p);
+										}
+									}
+								}
+							}
+							return { success: true, rows: rows, cols: cols };
+						}, true, false, resolve);
+					});
+				}
+				return { success: false, error: 'Not in OnlyOffice environment' };
+			},
+
+			'insert_image': async function(params) {
+				if (window.Asc && window.Asc.plugin && window.Asc.plugin.callCommand) {
+					var self = this;
+					return new Promise(function(resolve) {
+						window.Asc.plugin.callCommand(function() {
+							var src = params && params.image_src ? String(params.image_src) : '';
+							if (!src) return { success: false, error: 'image_src is required' };
+							var wmm = (params && params.width_mm) ? Number(params.width_mm) : 50;
+							var hmm = (params && params.height_mm) ? Number(params.height_mm) : 50;
+							var wEmu = self.mmToEmu(wmm);
+							var hEmu = self.mmToEmu(hmm);
+							var img = Api.CreateImage ? Api.CreateImage(src, wEmu, hEmu) : null;
+							if (!img) return { success: false, error: 'CreateImage failed' };
+
+							var doc = Api.GetDocument();
+							var para = doc.GetCurrentParagraph ? doc.GetCurrentParagraph() : null;
+							if (para && para.Push) {
+								para.Push(img);
+							} else {
+								return { success: false, error: 'Could not insert image at cursor' };
+							}
+
+							if (params && params.add_caption) {
+								var captionText = params.caption_text ? String(params.caption_text) : '';
+								var captionLabel = params.caption_label ? String(params.caption_label) : 'Figure';
+								try {
+									var after = doc.GetCurrentParagraph ? doc.GetCurrentParagraph() : null;
+									if (after && after.AddCaption) {
+										after.AddCaption(captionText, captionLabel, false, 'Arabic', false, 0, 'hyphen');
+									}
+								} catch (e) {}
+							}
+							return { success: true };
+						}, true, false, resolve);
+					});
+				}
+				return { success: false, error: 'Not in OnlyOffice environment' };
+			},
+
+			'set_header_text': async function(params) {
+				if (window.Asc && window.Asc.plugin && window.Asc.plugin.callCommand) {
+					return new Promise(function(resolve) {
+						window.Asc.plugin.callCommand(function() {
+							var text = params && typeof params.text !== 'undefined' ? String(params.text) : '';
+							var type = params && params.type ? String(params.type) : 'default';
+							var sectionIndex = (params && typeof params.section_index === 'number') ? params.section_index : 0;
+							var overwrite = (params && typeof params.overwrite === 'boolean') ? params.overwrite : true;
+
+							var doc = Api.GetDocument();
+							var sections = doc.GetSections ? doc.GetSections() : [];
+							if (!sections || sectionIndex < 0 || sectionIndex >= sections.length) {
+								return { success: false, error: 'section_index out of range', section_count: sections ? sections.length : 0 };
+							}
+							var section = sections[sectionIndex];
+							var header = section.GetHeader ? section.GetHeader(type, true) : null;
+							if (!header) return { success: false, error: 'GetHeader failed' };
+							if (overwrite && header.RemoveAllElements) header.RemoveAllElements();
+							var p = Api.CreateParagraph ? Api.CreateParagraph() : null;
+							if (p && p.AddText) p.AddText(text);
+							if (header.Push && p) header.Push(p);
+							return { success: true, type: type, section_index: sectionIndex };
+						}, true, false, resolve);
+					});
+				}
+				return { success: false, error: 'Not in OnlyOffice environment' };
+			},
+
+			'set_footer_text': async function(params) {
+				if (window.Asc && window.Asc.plugin && window.Asc.plugin.callCommand) {
+					return new Promise(function(resolve) {
+						window.Asc.plugin.callCommand(function() {
+							var text = params && typeof params.text !== 'undefined' ? String(params.text) : '';
+							var type = params && params.type ? String(params.type) : 'default';
+							var sectionIndex = (params && typeof params.section_index === 'number') ? params.section_index : 0;
+							var overwrite = (params && typeof params.overwrite === 'boolean') ? params.overwrite : true;
+
+							var doc = Api.GetDocument();
+							var sections = doc.GetSections ? doc.GetSections() : [];
+							if (!sections || sectionIndex < 0 || sectionIndex >= sections.length) {
+								return { success: false, error: 'section_index out of range', section_count: sections ? sections.length : 0 };
+							}
+							var section = sections[sectionIndex];
+							var footer = section.GetFooter ? section.GetFooter(type, true) : null;
+							if (!footer) return { success: false, error: 'GetFooter failed' };
+							if (overwrite && footer.RemoveAllElements) footer.RemoveAllElements();
+							var p = Api.CreateParagraph ? Api.CreateParagraph() : null;
+							if (p && p.AddText) p.AddText(text);
+							if (footer.Push && p) footer.Push(p);
+							return { success: true, type: type, section_index: sectionIndex };
+						}, true, false, resolve);
+					});
+				}
+				return { success: false, error: 'Not in OnlyOffice environment' };
+			},
+
+			'add_table_of_contents': async function() {
+				if (window.Asc && window.Asc.plugin && window.Asc.plugin.callCommand) {
+					return new Promise(function(resolve) {
+						window.Asc.plugin.callCommand(function() {
+							var doc = Api.GetDocument();
+							var ok = doc.AddTableOfContents ? doc.AddTableOfContents({}) : false;
+							return { success: !!ok };
+						}, true, false, resolve);
+					});
+				}
+				return { success: false, error: 'Not in OnlyOffice environment' };
+			},
+
+			'add_table_of_figures': async function(params) {
+				if (window.Asc && window.Asc.plugin && window.Asc.plugin.callCommand) {
+					return new Promise(function(resolve) {
+						window.Asc.plugin.callCommand(function() {
+							var doc = Api.GetDocument();
+							var buildFrom = params && params.build_from ? String(params.build_from) : 'Figure';
+							var replace = !!(params && params.replace);
+							var ok = doc.AddTableOfFigures ? doc.AddTableOfFigures({ BuildFrom: buildFrom }, replace) : false;
+							return { success: !!ok, build_from: buildFrom };
+						}, true, false, resolve);
+					});
+				}
+				return { success: false, error: 'Not in OnlyOffice environment' };
+			},
+
+			'get_document_snapshot': async function(params) {
+				var includeMarkdown = !!(params && params.include_markdown);
+				var includeOutline = (params && typeof params.include_outline === 'boolean') ? params.include_outline : true;
+				var includeHeadersFooters = !!(params && params.include_headers_footers);
+				var maxMd = (params && params.max_markdown_chars) ? params.max_markdown_chars : 20000;
+
+				// Selected text is easiest via executeMethod.
+				var selectedText = '';
+				if (window.Asc && window.Asc.plugin && window.Asc.plugin.executeMethod) {
+					selectedText = await new Promise(function(resolve) {
+						window.Asc.plugin.executeMethod('GetSelectedText', [], function(result) {
+							resolve(result || '');
+						});
+					});
+				}
+
+				if (window.Asc && window.Asc.plugin && window.Asc.plugin.callCommand) {
+					return new Promise(function(resolve) {
+						window.Asc.plugin.callCommand(function() {
+							var doc = Api.GetDocument();
+							var pageIndex = doc.GetCurrentPage ? doc.GetCurrentPage() : 0;
+							var pageCount = doc.GetPageCount ? doc.GetPageCount() : 0;
+
+							var para = doc.GetCurrentParagraph ? doc.GetCurrentParagraph() : null;
+							var paraText = para && para.GetText ? para.GetText({ NewLineSeparator: '\n' }) : '';
+
+							var outline = [];
+							if (includeOutline) {
+								var count = doc.GetElementsCount ? doc.GetElementsCount() : 0;
+								for (var i = 0; i < count; i++) {
+									var elem = doc.GetElement(i);
+									if (elem && elem.GetClassType && elem.GetClassType() === 'paragraph') {
+										var style = elem.GetStyle ? elem.GetStyle() : null;
+										if (style) {
+											var styleName = style.GetName ? style.GetName() : '';
+											if (styleName && styleName.indexOf('Heading') === 0) {
+												var level = parseInt(styleName.replace('Heading', '').trim(), 10) || 1;
+												outline.push({ text: elem.GetText ? elem.GetText({ NewLineSeparator: '\n' }) : '', level: level });
+											}
+										}
+									}
+								}
+							}
+
+							var snapshot = {
+								selected_text: selectedText,
+								page_index: pageIndex,
+								page_number: pageIndex + 1,
+								page_count: pageCount,
+								current_paragraph: paraText
+							};
+
+							if (includeOutline) snapshot.document_outline = outline;
+
+							if (includeMarkdown && doc.ToMarkdown) {
+								var md = doc.ToMarkdown(true, false, false, false);
+								snapshot.document_markdown = (md || '').substring(0, maxMd);
+							}
+
+							if (includeHeadersFooters && doc.GetSections) {
+								var sections = doc.GetSections();
+								if (sections && sections.length > 0) {
+									var s0 = sections[0];
+									var h = s0.GetHeader ? s0.GetHeader('default', false) : null;
+									var f = s0.GetFooter ? s0.GetFooter('default', false) : null;
+									snapshot.header_default = h && h.GetText ? h.GetText({ ParaSeparator: '\n', NewLineSeparator: '\n' }) : '';
+									snapshot.footer_default = f && f.GetText ? f.GetText({ ParaSeparator: '\n', NewLineSeparator: '\n' }) : '';
+								}
+							}
+
+							return snapshot;
+						}, false, false, resolve);
+					});
+				}
+
+				return {
+					selected_text: selectedText,
+					page_index: 0,
+					page_number: 1,
+					page_count: 0,
+					current_paragraph: '',
+					error: 'Not in OnlyOffice environment'
+				};
+			},
+			
+		'insert_text': async function(params) {
+			console.log('insert_text called with:', params);
+			if (window.Asc && window.Asc.plugin && window.Asc.plugin.executeMethod) {
+				var text = params.text;
+				var format = params.format || 'plain';
+				
+				if (format === 'html') {
+					return new Promise(function(resolve) {
+						window.Asc.plugin.executeMethod('PasteHtml', [text], function(result) {
+							console.log('PasteHtml result:', result);
+							resolve({ success: true, message: 'HTML inserted' });
+						});
+					});
+				} else if (format === 'markdown') {
+					// Convert markdown to HTML
+					var html = markdownToHtml(text);
+					return new Promise(function(resolve) {
+						window.Asc.plugin.executeMethod('PasteHtml', [html], function(result) {
+							console.log('PasteHtml (markdown) result:', result);
+							resolve({ success: true, message: 'Markdown inserted as HTML' });
+						});
+					});
+				} else {
+					// Plain text
+					return new Promise(function(resolve) {
+						window.Asc.plugin.executeMethod('PasteText', [text], function(result) {
+							console.log('PasteText result:', result);
+							resolve({ success: true, message: 'Text inserted' });
+						});
+					});
+				}
+			}
+			console.log('Not in OnlyOffice environment');
+			return { success: false, error: 'Not in OnlyOffice environment' };
+		},
+			
+			'replace_selection': async function(params) {
+				console.log('replace_selection called with:', params);
+				var text = params.text || '';
+				
+				if (window.Asc && window.Asc.plugin && window.Asc.plugin.executeMethod) {
+					return new Promise(function(resolve) {
+						// Use InputText which properly handles selection replacement
+						// When there's a selection, InputText replaces it with the new text
+						// If text is empty, this effectively deletes the selection
+						window.Asc.plugin.executeMethod('InputText', [text], function(result) {
+							console.log('InputText result:', result);
+							if (!text || text === '') {
+								resolve({ success: true, message: 'Selection deleted' });
+							} else {
+								resolve({ success: true, message: 'Selection replaced' });
+							}
+						});
+					});
+				}
+				
+				// Fallback to insert_text for non-deletion cases
+				if (text && text !== '') {
+					return ToolExecutor.tools['insert_text'](params);
+				}
+				
+				return { success: false, error: 'Not in OnlyOffice environment' };
+			},
+			
+			'delete_selection': async function() {
+				console.log('delete_selection called');
+				if (window.Asc && window.Asc.plugin && window.Asc.plugin.executeMethod) {
+					return new Promise(function(resolve) {
+						// InputText with empty string deletes the current selection
+						window.Asc.plugin.executeMethod('InputText', [''], function(result) {
+							console.log('delete_selection InputText result:', result);
+							resolve({ success: true, message: 'Selection deleted' });
+						});
+					});
+				}
+				return { success: false, error: 'Not in OnlyOffice environment' };
+			},
+			
+		'get_content_controls': async function() {
+			console.log('get_content_controls called');
+			if (window.Asc && window.Asc.plugin && window.Asc.plugin.callCommand) {
+				return new Promise(function(resolve) {
+					window.Asc.plugin.callCommand(function() {
+						var doc = Api.GetDocument();
+						var controls = doc.GetAllContentControls();
+						console.log('GetAllContentControls returned ' + controls.length + ' controls');
+						var result = [];
+						for (var i = 0; i < controls.length; i++) {
+							var cc = controls[i];
+							var tag = cc.GetTag ? cc.GetTag() : '';
+							var title = cc.GetLabel ? cc.GetLabel() : '';
+							var text = '';
+							
+							// Try to get text content
+							try {
+								if (cc.GetElementsCount) {
+									var count = cc.GetElementsCount();
+									for (var j = 0; j < count; j++) {
+										var elem = cc.GetElement(j);
+										if (elem && elem.GetText) {
+											text += elem.GetText();
+										}
+									}
+								}
+							} catch (e) {
+								console.log('Error getting text:', e);
+							}
+							
+							result.push({
+								tag: tag,
+								title: title,
+								value: text
+							});
+							console.log('Control ' + i + ':', JSON.stringify(result[i]));
+						}
+						return result;
+					}, false, false, resolve);
+				});
+			}
+			console.log('Not in OnlyOffice environment');
+			return [];
+		},
+			
+		'fill_content_control': async function(params) {
+			console.log('fill_content_control called with:', params);
+			if (window.Asc && window.Asc.plugin && window.Asc.plugin.callCommand) {
+				return new Promise(function(resolve) {
+					window.Asc.plugin.callCommand(function() {
+						var doc = Api.GetDocument();
+						var controls = doc.GetAllContentControls();
+						console.log('Found ' + controls.length + ' content controls');
+						
+						for (var i = 0; i < controls.length; i++) {
+							var cc = controls[i];
+							var tag = cc.GetTag();
+							var title = cc.GetLabel ? cc.GetLabel() : '';
+							console.log('Control ' + i + ': tag=' + tag + ', title=' + title);
+							
+							// Match by tag or title
+							if (tag === params.tag || title === params.tag) {
+								// Clear existing content and add new text
+								var range = cc.GetRange(0, 0);
+								if (range) {
+									range.Delete();
+								}
+								
+								// Get the paragraph inside the content control and add text
+								var count = cc.GetElementsCount ? cc.GetElementsCount() : 0;
+								if (count > 0) {
+									var para = cc.GetElement(0);
+									if (para && para.AddText) {
+										para.AddText(params.value);
+									}
+								} else {
+									// Fallback: try SetText if available
+									if (cc.SetText) {
+										cc.SetText(params.value);
+									}
+								}
+								
+								return { success: true, message: 'Content control "' + params.tag + '" filled with: ' + params.value };
+							}
+						}
+						return { success: false, error: 'Content control "' + params.tag + '" not found. Available tags: ' + controls.map(function(c) { return c.GetTag(); }).join(', ') };
+					}, true, false, resolve);  // Changed to true for recalculation
+				});
+			}
+			return { success: false, error: 'Not in OnlyOffice environment' };
+		},
 			
 			'add_comment': async function(params) {
 				if (window.Asc && window.Asc.plugin && window.Asc.plugin.executeMethod) {
@@ -319,6 +814,7 @@
 			'get_content_controls': '📝',
 			'insert_text': '✏️',
 			'replace_selection': '🔄',
+			'delete_selection': '🗑️',
 			'fill_content_control': '📝',
 			'add_comment': '💬'
 		};
@@ -564,54 +1060,74 @@
 		var html = '';
 		
 		if (item.type === 'thinking') {
-			html += '<div class="thinking-block">';
+			// Minimal thinking indicator - collapsed by default, no emoji
+			html += '<div class="thinking-block collapsed">';
 			html += '<div class="thinking-header">';
-			html += '<span class="thinking-icon">💭</span>';
-			html += '<span class="thinking-label">Thinking...</span>';
-			html += '<span class="thinking-toggle">▼</span>';
+			html += '<span class="thinking-icon"></span>';
+			html += '<span class="thinking-label">' + escapeHtml(item.content || 'Processing...') + '</span>';
+			html += '<span class="thinking-toggle">›</span>';
 			html += '</div>';
 			html += '<div class="thinking-content">' + escapeHtml(item.content) + '</div>';
 			html += '</div>';
 		} else if (item.type === 'tool_call' || item.type === 'tool_result') {
 			var status = item.status || 'running';
-			var statusText = status === 'success' ? '✓ Done' : (status === 'error' ? '✗ Error' : 'Running...');
+			var toolIdAttr = item.id ? (' data-tool-call-id="' + escapeHtml(item.id) + '"') : '';
 			
-			html += '<div class="tool-call" data-status="' + status + '">';
-			html += '<div class="tool-call-header">';
+			// Minimal inline tool indicator
+			html += '<div class="tool-call tool-call--minimal" data-status="' + status + '"' + toolIdAttr + '>';
+			html += '<div class="tool-call-header" role="button" tabindex="0" aria-expanded="false">';
 			html += '<div class="tool-call-left">';
-			html += '<span class="tool-icon">' + getToolIcon(item.name) + '</span>';
-			html += '<span class="tool-name">' + escapeHtml(item.name) + '</span>';
+			html += '<span class="tool-dot"></span>';
+			html += '<span class="tool-name">' + escapeHtml(formatToolName(item.name)) + '</span>';
 			html += '<span class="tool-status ' + status + '">';
 			if (status === 'running') {
-				html += '<span class="spinner"></span>';
+				html += '<span class="spinner" aria-hidden="true"></span>';
 			}
-			html += statusText;
 			html += '</span>';
 			html += '</div>';
-			html += '<span class="tool-toggle">▶</span>';
+			html += '<span class="tool-toggle" aria-hidden="true">›</span>';
 			html += '</div>';
+			// Details hidden by default, shown on expand
 			html += '<div class="tool-call-body">';
-			html += '<div class="tool-section-label">Parameters</div>';
-			html += '<pre class="tool-json">' + formatJson(item.params || {}) + '</pre>';
+			if (item.params && Object.keys(item.params).length > 0) {
+				html += '<div class="tool-section-label">Params</div>';
+				html += '<pre class="tool-json">' + escapeHtml(formatJsonTruncated(item.params, 1500)) + '</pre>';
+			}
 			if (item.result !== undefined) {
 				html += '<div class="tool-result-section">';
 				html += '<div class="tool-section-label">Result</div>';
-				html += '<pre class="tool-json">' + escapeHtml(typeof item.result === 'string' ? item.result : formatJson(item.result)) + '</pre>';
+				html += '<pre class="tool-json">' + escapeHtml(typeof item.result === 'string' ? truncateResult(item.result, 500) : formatJsonTruncated(item.result, 2000)) + '</pre>';
 				html += '</div>';
 			}
 			html += '</div>';
 			html += '</div>';
 		} else if (item.type === 'checkpoint') {
+			// Simplified checkpoint - just a subtle divider
 			html += '<div class="checkpoint">';
 			html += '<div class="checkpoint-line"></div>';
-			html += '<div class="checkpoint-actions">';
-			html += '<button class="checkpoint-btn apply">Apply Changes</button>';
-			html += '<button class="checkpoint-btn revert">Revert</button>';
-			html += '</div>';
 			html += '</div>';
 		}
 		
 		return html;
+	}
+
+	// Format tool name for display (more readable)
+	function formatToolName(name) {
+		if (!name) return 'unknown';
+		// Convert snake_case to readable: get_document_text -> Get document text
+		return name.replace(/_/g, ' ');
+	}
+
+	// Truncate long result strings for cleaner display
+	function truncateResult(str, maxLen) {
+		if (!str || str.length <= maxLen) return str;
+		return str.substring(0, maxLen) + '...';
+	}
+
+	function formatJsonTruncated(obj, maxLen) {
+		var s = formatJson(obj);
+		if (!maxLen || s.length <= maxLen) return s;
+		return s.substring(0, maxLen) + '\n… (truncated)';
 	}
 
 	function appendMessageElement(html) {
@@ -796,6 +1312,7 @@
 				// Backend is requesting frontend to execute a tool
 				var toolItem = { 
 					type: 'tool_call', 
+					id: data.id,
 					name: data.name, 
 					params: data.params, 
 					status: 'running' 
@@ -825,7 +1342,7 @@
 				}
 				
 				// Update UI with result
-				updateToolCallResult(msgContainer, data.name, toolResult);
+				updateToolCallResult(msgContainer, data.id, data.name, toolResult);
 				
 				// Update stored item
 				for (var j = items.length - 1; j >= 0; j--) {
@@ -841,6 +1358,7 @@
 				// Tool was executed (for display)
 				var displayToolItem = { 
 					type: 'tool_call', 
+					id: data.id,
 					name: data.name, 
 					params: data.params, 
 					status: data.status || 'success',
@@ -848,10 +1366,13 @@
 				};
 				
 				// Check if we already have this tool call running
-				var existingToolCall = msgContainer.querySelector('.tool-call[data-status="running"]');
+				var existingToolCall = data.id ? msgContainer.querySelector('.tool-call[data-tool-call-id="' + data.id + '"][data-status="running"]') : null;
+				if (!existingToolCall) {
+					existingToolCall = msgContainer.querySelector('.tool-call[data-status="running"]');
+				}
 				if (existingToolCall) {
 					// Update existing
-					updateToolCallResult(msgContainer, data.name, { 
+					updateToolCallResult(msgContainer, data.id, data.name, { 
 						success: data.status === 'success', 
 						result: data.result 
 					});
@@ -904,27 +1425,49 @@
 		}
 	}
 
-	function updateToolCallResult(msgContainer, toolName, result) {
+	function updateToolCallResult(msgContainer, toolCallId, toolName, result) {
+		var byId = null;
+		if (toolCallId) {
+			byId = msgContainer.querySelector('.tool-call[data-tool-call-id="' + toolCallId + '"]');
+		}
+		if (byId && byId.getAttribute('data-status') === 'running') {
+			applyToolCallResultToElement(byId, result);
+			return;
+		}
+
 		var toolCalls = msgContainer.querySelectorAll('.tool-call');
 		for (var i = toolCalls.length - 1; i >= 0; i--) {
 			var toolCall = toolCalls[i];
 			var nameEl = toolCall.querySelector('.tool-name');
 			if (nameEl && nameEl.textContent === toolName && toolCall.getAttribute('data-status') === 'running') {
+				applyToolCallResultToElement(toolCall, result);
+				break;
+			}
+		}
+	}
+
+	function applyToolCallResultToElement(toolCallEl, result) {
 				var status = result.success ? 'success' : 'error';
-				toolCall.setAttribute('data-status', status);
+		toolCallEl.setAttribute('data-status', status);
 				
-				var statusEl = toolCall.querySelector('.tool-status');
+		var statusEl = toolCallEl.querySelector('.tool-status');
 				statusEl.className = 'tool-status ' + status;
-				statusEl.innerHTML = status === 'success' ? '✓ Done' : '✗ Error';
-				
-				var bodyEl = toolCall.querySelector('.tool-call-body');
-				var resultStr = typeof result.result === 'string' ? result.result : formatJson(result.result);
+
+		var statusTextEl = toolCallEl.querySelector('.tool-status-text');
+		if (statusTextEl) statusTextEl.textContent = status === 'success' ? 'Done' : 'Error';
+
+		// Remove spinner if present
+		var spinner = statusEl.querySelector('.spinner');
+		if (spinner) spinner.remove();
+
+		var bodyEl = toolCallEl.querySelector('.tool-call-body');
+		// Avoid duplicating result section if already added (e.g., both tool_result_request and tool_call events arrive)
+		if (bodyEl && !bodyEl.querySelector('.tool-result-section')) {
+			var resultStr = typeof result.result === 'string' ? result.result : formatJsonTruncated(result.result, 8000);
 				bodyEl.insertAdjacentHTML('beforeend', 
 					'<div class="tool-result-section"><div class="tool-section-label">Result</div>' +
 					'<pre class="tool-json">' + escapeHtml(resultStr) + '</pre></div>'
 				);
-				break;
-			}
 		}
 	}
 
@@ -998,7 +1541,7 @@
 				scrollToBottom();
 				await sleep(800);
 			} else if (item.type === 'tool_call') {
-				var toolItem = { type: 'tool_call', name: item.name, params: item.params, status: 'running' };
+				var toolItem = { type: 'tool_call', id: item.id, name: item.name, params: item.params, status: 'running' };
 				items.push(toolItem);
 				msgContainer.insertAdjacentHTML('beforeend', renderMetadataItem(toolItem));
 				scrollToBottom();
@@ -1012,12 +1555,15 @@
 					
 					var statusEl = lastToolCall.querySelector('.tool-status');
 					statusEl.className = 'tool-status ' + item.status;
-					statusEl.innerHTML = item.status === 'success' ? '✓ Done' : '✗ Error';
+					var statusTextEl = lastToolCall.querySelector('.tool-status-text');
+					if (statusTextEl) statusTextEl.textContent = item.status === 'success' ? 'Done' : 'Error';
+					var spinner = statusEl.querySelector('.spinner');
+					if (spinner) spinner.remove();
 					
 					var bodyEl = lastToolCall.querySelector('.tool-call-body');
 					bodyEl.insertAdjacentHTML('beforeend', 
 						'<div class="tool-result-section"><div class="tool-section-label">Result</div>' +
-						'<pre class="tool-json">' + escapeHtml(typeof item.result === 'string' ? item.result : formatJson(item.result)) + '</pre></div>'
+						'<pre class="tool-json">' + escapeHtml(typeof item.result === 'string' ? item.result : formatJsonTruncated(item.result, 8000)) + '</pre></div>'
 					);
 				}
 				
@@ -1197,6 +1743,10 @@
 			if (toolHeader) {
 				var card = toolHeader.closest('.tool-call');
 				card.classList.toggle('expanded');
+
+				// Keep aria state in sync for keyboard/screen readers
+				var expanded = card.classList.contains('expanded');
+				toolHeader.setAttribute('aria-expanded', expanded ? 'true' : 'false');
 			}
 		});
 	}

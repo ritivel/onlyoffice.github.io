@@ -414,58 +414,61 @@ body {
 }
 
 /* ============================================
-   Thinking Block
+   Thinking Block - Minimal inline indicator
    ============================================ */
 .thinking-block {
-	background: var(--cp-bg-secondary);
-	border: 1px solid var(--cp-border);
-	border-left: 3px solid var(--cp-accent);
-	border-radius: var(--cp-radius-md);
-	overflow: hidden;
-	margin-bottom: 8px;
+	margin: 4px 0;
 }
 
 .thinking-header {
 	display: flex;
 	align-items: center;
-	gap: 8px;
-	padding: 8px 12px;
+	gap: 6px;
+	padding: 4px 0;
 	cursor: pointer;
 	user-select: none;
-	transition: background 0.15s ease;
 }
 
 .thinking-header:hover {
-	background: var(--cp-bg-hover);
+	opacity: 0.8;
 }
 
 .thinking-icon {
-	font-size: 14px;
+	width: 6px;
+	height: 6px;
+	border-radius: 50%;
+	background: var(--cp-text-muted);
+	opacity: 0.5;
 }
 
 .thinking-label {
 	flex: 1;
-	font-size: 12px;
-	font-style: italic;
-	color: var(--cp-text-secondary);
+	font-size: 11px;
+	color: var(--cp-text-muted);
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	max-width: 300px;
 }
 
 .thinking-toggle {
-	font-size: 10px;
+	font-size: 12px;
 	color: var(--cp-text-muted);
 	transition: transform 0.2s ease;
+	opacity: 0.5;
 }
 
-.thinking-block.collapsed .thinking-toggle {
-	transform: rotate(-90deg);
+.thinking-block:not(.collapsed) .thinking-toggle {
+	transform: rotate(90deg);
 }
 
 .thinking-content {
-	padding: 8px 12px 12px;
-	font-size: 12px;
-	color: var(--cp-text-secondary);
-	line-height: 1.5;
-	border-top: 1px solid var(--cp-border);
+	padding: 6px 0 6px 12px;
+	font-size: 11px;
+	color: var(--cp-text-muted);
+	line-height: 1.4;
+	border-left: 2px solid var(--cp-border);
+	margin-left: 3px;
 }
 
 .thinking-block.collapsed .thinking-content {
@@ -473,23 +476,25 @@ body {
 }
 
 /* ============================================
-   Tool Call Card
+   Tool Call Card - Minimal inline style
    ============================================ */
 .tool-call {
-	background: var(--cp-bg-secondary);
-	border: 1px solid var(--cp-border);
-	border-radius: var(--cp-radius-md);
-	overflow: hidden;
-	margin-bottom: 8px;
+	margin: 3px 0;
+}
+
+.tool-call--minimal {
+	/* Even more compact for inline display */
 }
 
 .tool-call-header {
-	display: flex;
+	display: inline-flex;
 	align-items: center;
-	justify-content: space-between;
-	padding: 8px 12px;
+	gap: 6px;
+	padding: 2px 6px;
 	cursor: pointer;
 	transition: background 0.15s ease;
+	border-radius: var(--cp-radius-sm);
+	background: var(--cp-bg-tertiary);
 }
 
 .tool-call-header:hover {
@@ -499,50 +504,68 @@ body {
 .tool-call-left {
 	display: flex;
 	align-items: center;
-	gap: 8px;
+	gap: 6px;
+	min-width: 0;
 }
 
-.tool-icon {
-	font-size: 14px;
+.tool-dot {
+	width: 5px;
+	height: 5px;
+	border-radius: 50%;
+	background: var(--cp-text-muted);
+	flex: 0 0 auto;
+}
+
+.tool-call[data-status="running"] .tool-dot {
+	background: var(--cp-accent);
+	animation: toolPulse 1.2s ease-in-out infinite;
+}
+
+.tool-call[data-status="success"] .tool-dot {
+	background: var(--cp-success);
+}
+
+.tool-call[data-status="error"] .tool-dot {
+	background: var(--cp-error);
+}
+
+@keyframes toolPulse {
+	0%, 100% { opacity: 0.35; }
+	50% { opacity: 1; }
+}
+
+.tool-label {
+	display: none; /* Hide "tool" label for minimal style */
 }
 
 .tool-name {
-	font-family: var(--cp-font-mono);
-	font-size: 12px;
-	font-weight: 500;
-	color: var(--cp-text-primary);
+	font-size: 11px;
+	font-weight: 400;
+	color: var(--cp-text-secondary);
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	max-width: 200px;
 }
 
 .tool-status {
 	display: flex;
 	align-items: center;
-	gap: 5px;
-	padding: 2px 8px;
-	border-radius: 10px;
+	gap: 4px;
+	padding: 0;
 	font-size: 10px;
-	font-weight: 500;
+	color: var(--cp-text-muted);
 }
 
-.tool-status.running {
-	background: var(--cp-accent-muted);
-	color: var(--cp-accent);
-}
-
-.tool-status.success {
-	background: rgba(78, 201, 176, 0.15);
-	color: var(--cp-success);
-}
-
-.tool-status.error {
-	background: rgba(241, 76, 76, 0.15);
-	color: var(--cp-error);
+.tool-status-text {
+	display: none; /* Hide text status for minimal style */
 }
 
 /* Spinner */
 .spinner {
-	width: 10px;
-	height: 10px;
-	border: 2px solid currentColor;
+	width: 8px;
+	height: 8px;
+	border: 1.5px solid var(--cp-accent);
 	border-top-color: transparent;
 	border-radius: 50%;
 	animation: spin 0.8s linear infinite;
@@ -553,9 +576,10 @@ body {
 }
 
 .tool-toggle {
-	font-size: 10px;
+	font-size: 12px;
 	color: var(--cp-text-muted);
 	transition: transform 0.2s ease;
+	opacity: 0.6;
 }
 
 .tool-call.expanded .tool-toggle {
@@ -564,9 +588,10 @@ body {
 
 .tool-call-body {
 	display: none;
-	padding: 12px;
-	border-top: 1px solid var(--cp-border);
-	background: var(--cp-bg-primary);
+	margin: 4px 0 0 11px;
+	padding: 8px;
+	border-left: 2px solid var(--cp-border);
+	font-size: 11px;
 }
 
 .tool-call.expanded .tool-call-body {
@@ -574,79 +599,53 @@ body {
 }
 
 .tool-section-label {
-	font-size: 10px;
+	font-size: 9px;
 	font-weight: 600;
 	text-transform: uppercase;
-	letter-spacing: 0.5px;
+	letter-spacing: 0.4px;
 	color: var(--cp-text-muted);
-	margin-bottom: 6px;
+	margin-bottom: 4px;
 }
 
 .tool-json {
 	margin: 0;
-	padding: 8px;
+	padding: 6px;
 	background: var(--cp-bg-tertiary);
 	border-radius: var(--cp-radius-sm);
 	font-family: var(--cp-font-mono);
-	font-size: 11px;
-	line-height: 1.4;
+	font-size: 10px;
+	line-height: 1.3;
 	overflow-x: auto;
 	white-space: pre-wrap;
 	word-break: break-word;
-	color: var(--cp-text-primary);
+	color: var(--cp-text-secondary);
+	max-height: 150px;
+	overflow-y: auto;
 }
 
 .tool-result-section {
-	margin-top: 12px;
+	margin-top: 8px;
 }
 
 /* ============================================
-   Checkpoint
+   Checkpoint - Subtle separator
    ============================================ */
 .checkpoint {
 	display: flex;
 	align-items: center;
-	gap: 12px;
-	padding: 8px 0;
-	margin: 8px 0;
+	padding: 4px 0;
+	margin: 4px 0;
 }
 
 .checkpoint-line {
 	flex: 1;
 	height: 1px;
-	background: linear-gradient(90deg, transparent, var(--cp-border) 20%, var(--cp-border) 80%, transparent);
+	background: var(--cp-border);
+	opacity: 0.5;
 }
 
 .checkpoint-actions {
-	display: flex;
-	gap: 8px;
-}
-
-.checkpoint-btn {
-	padding: 6px 12px;
-	font-size: 11px;
-	font-weight: 500;
-	border-radius: var(--cp-radius-sm);
-	border: 1px solid var(--cp-border);
-	background: var(--cp-bg-secondary);
-	color: var(--cp-text-secondary);
-	cursor: pointer;
-	transition: all 0.15s ease;
-}
-
-.checkpoint-btn:hover {
-	border-color: var(--cp-accent);
-	color: var(--cp-accent);
-}
-
-.checkpoint-btn.apply {
-	background: var(--cp-accent);
-	border-color: var(--cp-accent);
-	color: white;
-}
-
-.checkpoint-btn.apply:hover {
-	background: var(--cp-accent-hover);
+	display: none; /* Hidden - changes auto-apply */
 }
 
 /* ============================================

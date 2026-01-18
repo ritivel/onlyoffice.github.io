@@ -11,6 +11,7 @@
 	// ============================================
 	var Config = {
 		// Backend URL - change this to your deployed backend
+		// Document indexing API is now part of the main backend
 		BACKEND_URL: 'http://98.83.138.45:8000',
 		// Set to true to use dummy responses instead of real backend
 		USE_DUMMY: false
@@ -25,7 +26,13 @@
 		mode: 'ask', // 'ask' or 'agent'
 		isGenerating: false,
 		sidebarCollapsed: false,
-		abortController: null // For cancelling fetch requests
+		abortController: null, // For cancelling fetch requests
+		// Document indexing state
+		editorDocId: null, // Current document ID for indexing
+		indexedDocs: [], // List of indexed documents
+		mentionQuery: '', // Current @ mention search query
+		mentionStartPos: -1, // Position where @ was typed
+		selectedMentionIndex: 0 // Currently selected item in mention dropdown
 	};
 
 	// ============================================
@@ -34,14 +41,25 @@
 	var elements = {};
 
 	// ============================================
-	// STORAGE
+	// STORAGE - Document-specific chat storage
 	// ============================================
 	var Storage = {
-		KEY: 'copilot_chats',
+		BASE_KEY: 'copilot_chats',
+		
+		// Get the storage key for the current document
+		getKey: function() {
+			// Use document-specific storage if available
+			var docId = sessionStorage.getItem('copilot_doc_specific_id');
+			if (docId) {
+				return this.BASE_KEY + '_' + docId;
+			}
+			// Fallback to generic key (for backwards compatibility or when not in OnlyOffice)
+			return this.BASE_KEY;
+		},
 		
 		load: function() {
 			try {
-				var data = localStorage.getItem(this.KEY);
+				var data = localStorage.getItem(this.getKey());
 				return data ? JSON.parse(data) : [];
 			} catch (e) {
 				return [];
@@ -50,7 +68,7 @@
 		
 		save: function(chats) {
 			try {
-				localStorage.setItem(this.KEY, JSON.stringify(chats));
+				localStorage.setItem(this.getKey(), JSON.stringify(chats));
 			} catch (e) {
 				console.warn('Could not save chats');
 			}
@@ -272,45 +290,50 @@
 			},
 
 			'insert_table': async function(params) {
-				if (window.Asc && window.Asc.plugin && window.Asc.plugin.callCommand) {
-					var self = this;
+				// Generate HTML table and use PasteHtml for reliable insertion at cursor
+				if (window.Asc && window.Asc.plugin && window.Asc.plugin.executeMethod) {
+					var rows = params && params.rows ? Number(params.rows) : 1;
+					var cols = params && params.cols ? Number(params.cols) : 1;
+					var data = (params && params.data) ? params.data : null;
+					var headerRow = !!(params && params.header_row);
+					
+					if (rows <= 0 || cols <= 0) {
+						return { success: false, error: 'rows and cols must be positive' };
+					}
+					
+					// If data is provided, adjust dimensions
+					if (data && Array.isArray(data) && data.length > 0) {
+						rows = data.length;
+						if (data[0] && Array.isArray(data[0])) {
+							cols = Math.max(cols, data[0].length);
+						}
+					}
+					
+					// Build HTML table
+					var html = '<table style="border-collapse: collapse; width: 100%;">';
+					for (var r = 0; r < rows; r++) {
+						html += '<tr>';
+						for (var c = 0; c < cols; c++) {
+							var cellValue = '';
+							if (data && data[r] && typeof data[r][c] !== 'undefined') {
+								cellValue = String(data[r][c]);
+							}
+							// Use th for header row
+							var tag = (headerRow && r === 0) ? 'th' : 'td';
+							var style = 'border: 1px solid #000; padding: 5px;';
+							if (headerRow && r === 0) {
+								style += ' font-weight: bold; background-color: #f0f0f0;';
+							}
+							html += '<' + tag + ' style="' + style + '">' + escapeHtmlForTable(cellValue) + '</' + tag + '>';
+						}
+						html += '</tr>';
+					}
+					html += '</table>';
+					
 					return new Promise(function(resolve) {
-						window.Asc.plugin.callCommand(function() {
-							var rows = params && params.rows ? Number(params.rows) : 1;
-							var cols = params && params.cols ? Number(params.cols) : 1;
-							if (rows <= 0 || cols <= 0) {
-								return { success: false, error: 'rows and cols must be positive' };
-							}
-							var table = Api.CreateTable ? Api.CreateTable(cols, rows) : null;
-							if (!table) return { success: false, error: 'CreateTable failed' };
-							var doc = Api.GetDocument();
-							var para = doc.GetCurrentParagraph ? doc.GetCurrentParagraph() : null;
-							if (para && para.Push) {
-								para.Push(table);
-							} else {
-								return { success: false, error: 'Could not insert table at cursor' };
-							}
-
-							// Fill data if provided
-							var data = (params && params.data) ? params.data : null;
-							if (data && table.GetCell) {
-								for (var r = 0; r < rows; r++) {
-									for (var c = 0; c < cols; c++) {
-										var value = (data[r] && typeof data[r][c] !== 'undefined') ? String(data[r][c]) : '';
-										if (!value) continue;
-										var cell = table.GetCell(r, c);
-										if (cell && cell.GetContent) {
-											var content = cell.GetContent();
-											if (content && content.RemoveAllElements) content.RemoveAllElements();
-											var p = Api.CreateParagraph ? Api.CreateParagraph() : null;
-											if (p && p.AddText) p.AddText(value);
-											if (content && content.Push && p) content.Push(p);
-										}
-									}
-								}
-							}
-							return { success: true, rows: rows, cols: cols };
-						}, true, false, resolve);
+						window.Asc.plugin.executeMethod('PasteHtml', [html], function(result) {
+							resolve({ success: true, rows: rows, cols: cols, message: 'Table inserted' });
+						});
 					});
 				}
 				return { success: false, error: 'Not in OnlyOffice environment' };
@@ -720,9 +743,24 @@
 		}
 	};
 
+	// Helper to escape HTML for table cells
+	function escapeHtmlForTable(text) {
+		if (!text) return '';
+		return String(text)
+			.replace(/&/g, '&amp;')
+			.replace(/</g, '&lt;')
+			.replace(/>/g, '&gt;')
+			.replace(/"/g, '&quot;')
+			.replace(/'/g, '&#39;');
+	}
+
 	// Simple markdown to HTML converter for insert_text
 	function markdownToHtml(md) {
 		if (!md) return '';
+		
+		// First, handle markdown tables before other transformations
+		md = convertMarkdownTables(md);
+		
 		var html = md;
 		// Bold
 		html = html.replace(/\*\*(.+?)\*\*/g, '<b>$1</b>');
@@ -735,9 +773,96 @@
 		// Lists
 		html = html.replace(/^- (.+)$/gm, '<li>$1</li>');
 		html = html.replace(/(<li>.*<\/li>)+/g, '<ul>$&</ul>');
-		// Line breaks
+		// Line breaks (but not inside tables which are already converted)
 		html = html.replace(/\n/g, '<br>');
 		return html;
+	}
+
+	// Convert markdown tables to HTML tables
+	function convertMarkdownTables(md) {
+		if (!md) return '';
+		
+		var lines = md.split('\n');
+		var result = [];
+		var tableLines = [];
+		var inTable = false;
+		
+		for (var i = 0; i < lines.length; i++) {
+			var line = lines[i].trim();
+			
+			// Check if this line looks like a table row (has | separators)
+			var isTableRow = line.indexOf('|') !== -1 && 
+				(line.match(/\|/g) || []).length >= 2;
+			
+			// Check if this is a separator line (|---|---|)
+			var isSeparator = /^\|?[\s\-:]+\|[\s\-:|]+\|?$/.test(line);
+			
+			if (isTableRow || isSeparator) {
+				if (!inTable) {
+					inTable = true;
+					tableLines = [];
+				}
+				if (!isSeparator) {
+					tableLines.push(line);
+				}
+			} else {
+				if (inTable && tableLines.length > 0) {
+					// Convert accumulated table lines to HTML
+					result.push(buildHtmlTable(tableLines));
+					tableLines = [];
+					inTable = false;
+				}
+				result.push(lines[i]);
+			}
+		}
+		
+		// Handle table at end of content
+		if (inTable && tableLines.length > 0) {
+			result.push(buildHtmlTable(tableLines));
+		}
+		
+		return result.join('\n');
+	}
+
+	// Build HTML table from markdown table rows
+	function buildHtmlTable(tableLines) {
+		if (tableLines.length === 0) return '';
+		
+		var html = '<table style="border-collapse: collapse; width: 100%;">';
+		
+		for (var i = 0; i < tableLines.length; i++) {
+			var line = tableLines[i];
+			var cells = parseTableRow(line);
+			var isHeader = (i === 0);
+			
+			html += '<tr>';
+			for (var j = 0; j < cells.length; j++) {
+				var tag = isHeader ? 'th' : 'td';
+				var style = 'border: 1px solid #000; padding: 5px;';
+				if (isHeader) {
+					style += ' font-weight: bold; background-color: #f0f0f0;';
+				}
+				html += '<' + tag + ' style="' + style + '">' + escapeHtmlForTable(cells[j]) + '</' + tag + '>';
+			}
+			html += '</tr>';
+		}
+		
+		html += '</table>';
+		return html;
+	}
+
+	// Parse a markdown table row into cells
+	function parseTableRow(line) {
+		// Remove leading/trailing pipes and split by |
+		var trimmed = line.trim();
+		if (trimmed.charAt(0) === '|') trimmed = trimmed.substring(1);
+		if (trimmed.charAt(trimmed.length - 1) === '|') trimmed = trimmed.substring(0, trimmed.length - 1);
+		
+		var cells = trimmed.split('|').map(function(cell) {
+			return cell.trim();
+		});
+		
+		return cells;
 	}
 
 	// ============================================
@@ -835,12 +960,30 @@
 		}
 	}
 
-	// Simple markdown parser
+	// Simple markdown parser with proper link support
 	function parseMarkdown(text) {
 		if (!text) return '';
 		
-		// Escape HTML first
-		var html = escapeHtml(text);
+		// Process markdown links BEFORE escaping HTML to preserve them
+		// Match [text](url) pattern and extract parts
+		var linkPlaceholders = [];
+		var processedText = text.replace(/\[([^\]]+)\]\s*\(([^)]+)\)/g, function(match, linkText, url) {
+			var placeholder = '___MDLINK_' + linkPlaceholders.length + '___';
+			linkPlaceholders.push({ text: linkText.trim(), url: url.trim() });
+			return placeholder;
+		});
+		
+		// Escape HTML on the text with placeholders
+		var html = escapeHtml(processedText);
+		
+		// Restore links as proper HTML anchor tags with beautiful styling
+		for (var i = 0; i < linkPlaceholders.length; i++) {
+			var link = linkPlaceholders[i];
+			var linkHtml = '<a href="' + escapeHtml(link.url) + '" target="_blank" rel="noopener noreferrer" class="md-link">' + 
+				escapeHtml(link.text) + 
+				'<svg class="md-link-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg></a>';
+			html = html.replace('___MDLINK_' + i + '___', linkHtml);
+		}
 		
 		// Bold
 		html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
@@ -1073,34 +1216,39 @@
 			var status = item.status || 'running';
 			var toolIdAttr = item.id ? (' data-tool-call-id="' + escapeHtml(item.id) + '"') : '';
 			
-			// Minimal inline tool indicator
-			html += '<div class="tool-call tool-call--minimal" data-status="' + status + '"' + toolIdAttr + '>';
-			html += '<div class="tool-call-header" role="button" tabindex="0" aria-expanded="false">';
-			html += '<div class="tool-call-left">';
-			html += '<span class="tool-dot"></span>';
-			html += '<span class="tool-name">' + escapeHtml(formatToolName(item.name)) + '</span>';
-			html += '<span class="tool-status ' + status + '">';
-			if (status === 'running') {
-				html += '<span class="spinner" aria-hidden="true"></span>';
-			}
-			html += '</span>';
-			html += '</div>';
-			html += '<span class="tool-toggle" aria-hidden="true">›</span>';
-			html += '</div>';
-			// Details hidden by default, shown on expand
-			html += '<div class="tool-call-body">';
-			if (item.params && Object.keys(item.params).length > 0) {
-				html += '<div class="tool-section-label">Params</div>';
-				html += '<pre class="tool-json">' + escapeHtml(formatJsonTruncated(item.params, 1500)) + '</pre>';
-			}
-			if (item.result !== undefined) {
-				html += '<div class="tool-result-section">';
-				html += '<div class="tool-section-label">Result</div>';
-				html += '<pre class="tool-json">' + escapeHtml(typeof item.result === 'string' ? truncateResult(item.result, 500) : formatJsonTruncated(item.result, 2000)) + '</pre>';
+			// Check if this is a regulatory_search tool with results - render rich UI
+			if (item.name === 'regulatory_search' && item.result && item.result.data && item.result.data.success) {
+				html += renderRegulatorySearchResult(item);
+			} else {
+				// Minimal inline tool indicator for other tools
+				html += '<div class="tool-call tool-call--minimal" data-status="' + status + '"' + toolIdAttr + '>';
+				html += '<div class="tool-call-header" role="button" tabindex="0" aria-expanded="false">';
+				html += '<div class="tool-call-left">';
+				html += '<span class="tool-dot"></span>';
+				html += '<span class="tool-name">' + escapeHtml(formatToolName(item.name)) + '</span>';
+				html += '<span class="tool-status ' + status + '">';
+				if (status === 'running') {
+					html += '<span class="spinner" aria-hidden="true"></span>';
+				}
+				html += '</span>';
+				html += '</div>';
+				html += '<span class="tool-toggle" aria-hidden="true">›</span>';
+				html += '</div>';
+				// Details hidden by default, shown on expand
+				html += '<div class="tool-call-body">';
+				if (item.params && Object.keys(item.params).length > 0) {
+					html += '<div class="tool-section-label">Params</div>';
+					html += '<pre class="tool-json">' + escapeHtml(formatJsonTruncated(item.params, 1500)) + '</pre>';
+				}
+				if (item.result !== undefined) {
+					html += '<div class="tool-result-section">';
+					html += '<div class="tool-section-label">Result</div>';
+					html += '<pre class="tool-json">' + escapeHtml(typeof item.result === 'string' ? truncateResult(item.result, 500) : formatJsonTruncated(item.result, 2000)) + '</pre>';
+					html += '</div>';
+				}
+				html += '</div>';
 				html += '</div>';
 			}
-			html += '</div>';
-			html += '</div>';
 		} else if (item.type === 'checkpoint') {
 			// Simplified checkpoint - just a subtle divider
 			html += '<div class="checkpoint">';
@@ -1110,6 +1258,277 @@
 		
 		return html;
 	}
+
+	// Render regulatory search results with rich UI (Ritivel-style)
+	function renderRegulatorySearchResult(item) {
+		var data = item.result.data;
+		var query = data.query || item.params.query || '';
+		var answer = data.answer || '';
+		var sources = data.sources || [];
+		
+		var html = '<div class="regulatory-search-result">';
+		
+		// Two-column layout container
+		html += '<div class="reg-search-layout">';
+		
+		// Left column: Progress panel (simplified for results view)
+		html += '<div class="reg-search-progress-panel">';
+		html += '<div class="reg-progress-header">';
+		html += '<div class="reg-progress-icon-wrapper">';
+		html += '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>';
+		html += '</div>';
+		html += '<span class="reg-progress-title">Search Complete</span>';
+		html += '</div>';
+		
+		// Progress steps (all completed)
+		var steps = [
+			{ icon: 'brain', label: 'Query Analyzed', status: 'complete' },
+			{ icon: 'list', label: 'Query Decomposed', status: 'complete' },
+			{ icon: 'search', label: 'Search & Rerank', status: 'complete' },
+			{ icon: 'pen', label: 'Answer Synthesized', status: 'complete' }
+		];
+		
+		html += '<div class="reg-progress-steps">';
+		for (var s = 0; s < steps.length; s++) {
+			var step = steps[s];
+			var isLast = s === steps.length - 1;
+			html += '<div class="reg-step">';
+			html += '<div class="reg-step-indicator">';
+			html += '<div class="reg-step-icon ' + step.status + '">';
+			html += '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>';
+			html += '</div>';
+			if (!isLast) {
+				html += '<div class="reg-step-line complete"></div>';
+			}
+			html += '</div>';
+			html += '<div class="reg-step-content">';
+			html += '<span class="reg-step-label complete">' + step.label + '</span>';
+			html += '</div>';
+			html += '</div>';
+		}
+		html += '</div>';
+		
+		// Sources summary
+		if (sources.length > 0) {
+			html += '<div class="reg-sources-summary">';
+			html += '<div class="reg-sources-summary-label">Sources Found</div>';
+			html += '<div class="reg-sources-summary-chips">';
+			var typeCount = {};
+			for (var t = 0; t < sources.length; t++) {
+				var stype = (sources[t].source_type || 'doc').toUpperCase();
+				typeCount[stype] = (typeCount[stype] || 0) + 1;
+			}
+			for (var type in typeCount) {
+				html += '<span class="reg-type-chip reg-type-' + type.toLowerCase() + '">' + type + ' (' + typeCount[type] + ')</span>';
+			}
+			html += '</div>';
+			html += '</div>';
+		}
+		
+		html += '</div>'; // End progress panel
+		
+		// Right column: Results
+		html += '<div class="reg-search-results-panel">';
+		
+		// Answer section (shown first, above sources)
+		if (answer) {
+			html += '<div class="reg-answer-section">';
+			html += '<div class="reg-answer-header">';
+			html += '<div class="reg-answer-icon">';
+			html += '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 19l7-7 3 3-7 7-3-3z"/><path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z"/><path d="M2 2l7.586 7.586"/></svg>';
+			html += '</div>';
+			html += '<span class="reg-answer-title">Answer</span>';
+			html += '</div>';
+			html += '<div class="reg-answer-content">' + formatAnswerWithCitations(answer) + '</div>';
+			html += '</div>';
+		}
+		
+		// Sources section
+		if (sources.length > 0) {
+			html += '<div class="reg-sources-section">';
+			html += '<div class="reg-sources-header">';
+			html += '<div class="reg-sources-header-left">';
+			html += '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>';
+			html += '<span>Sources</span>';
+			html += '<span class="reg-sources-count">' + sources.length + '</span>';
+			html += '</div>';
+			html += '<div class="reg-sources-header-right">';
+			html += '<span class="reg-sources-dbs">ICH • FDA • PSG</span>';
+			html += '</div>';
+			html += '</div>';
+			
+			html += '<div class="reg-sources-list">';
+			for (var i = 0; i < sources.length; i++) {
+				var src = sources[i];
+				html += renderSourceCard(src, i);
+			}
+			html += '</div>';
+			html += '</div>';
+		}
+		
+		html += '</div>'; // End results panel
+		html += '</div>'; // End layout
+		html += '</div>'; // End regulatory-search-result
+		
+		return html;
+	}
+	
+	// Render individual source card (Ritivel-style expandable)
+	function renderSourceCard(src, index) {
+		var hasUrl = src.url && src.url.length > 0;
+		var sourceType = (src.source_type || 'doc').toLowerCase();
+		var uniqueId = 'source-' + index + '-' + Date.now();
+		
+		var html = '<div class="reg-source-card" data-source-id="' + uniqueId + '" data-expanded="false">';
+		
+		// Card header (always visible, clickable to expand)
+		html += '<button class="reg-source-card-header" onclick="toggleSourceCard(\'' + uniqueId + '\')">';
+		
+		// Citation badge
+		html += '<div class="reg-citation-badge">' + (index + 1) + '</div>';
+		
+		// Title and meta
+		html += '<div class="reg-source-info">';
+		html += '<div class="reg-source-title-row">';
+		html += '<h4 class="reg-source-title">' + escapeHtml(src.title || 'Source ' + (index + 1)) + '</h4>';
+		html += '<svg class="reg-source-chevron" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>';
+		html += '</div>';
+		
+		// Meta row: code, type badge, pages
+		html += '<div class="reg-source-meta-row">';
+		if (src.code) {
+			html += '<span class="reg-source-code">' + escapeHtml(src.code) + '</span>';
+		}
+		html += '<span class="reg-source-type-badge reg-type-' + sourceType + '">' + sourceType.toUpperCase() + '</span>';
+		if (src.page_numbers) {
+			html += '<span class="reg-source-pages">' + escapeHtml(src.page_numbers) + '</span>';
+		}
+		html += '</div>';
+		
+		// Snippet (truncated)
+		if (src.snippet) {
+			html += '<p class="reg-source-snippet-preview">' + escapeHtml(truncateText(src.snippet, 120)) + '</p>';
+		}
+		
+		html += '</div>'; // End source info
+		html += '</button>'; // End header
+		
+		// Expandable content
+		html += '<div class="reg-source-expanded">';
+		
+		// Header path breadcrumb
+		if (src.header_path) {
+			html += '<div class="reg-source-breadcrumb">';
+			html += '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>';
+			html += '<span>' + escapeHtml(src.header_path) + '</span>';
+			html += '</div>';
+		}
+		
+		// Full text
+		html += '<div class="reg-source-full-text">';
+		html += '<p>' + escapeHtml(src.snippet || src.full_text || 'No content available.') + '</p>';
+		html += '</div>';
+		
+		// Footer with relevance and link
+		html += '<div class="reg-source-footer">';
+		if (src.relevance_score && src.relevance_score > 0) {
+			var relevancePercent = Math.min(100, Math.round(src.relevance_score * 100));
+			html += '<div class="reg-source-relevance">';
+			html += '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>';
+			html += '<span>Relevance: ' + relevancePercent + '%</span>';
+			html += '</div>';
+		}
+		if (hasUrl) {
+			html += '<a href="' + escapeHtml(src.url) + '" target="_blank" rel="noopener noreferrer" class="reg-source-link-btn">';
+			html += '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>';
+			html += '<span>View Source</span>';
+			html += '<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>';
+			html += '</a>';
+		}
+		html += '</div>';
+		
+		html += '</div>'; // End expanded
+		html += '</div>'; // End card
+		
+		return html;
+	}
+	
+	// Format answer text with clickable citation badges and proper links
+	function formatAnswerWithCitations(text) {
+		if (!text) return '';
+		
+		// Process markdown links BEFORE escaping HTML to preserve them
+		// Match [text](url) pattern and extract parts
+		var linkPlaceholders = [];
+		var processedText = text.replace(/\[([^\]]+)\]\s*\(([^)]+)\)/g, function(match, linkText, url) {
+			var placeholder = '___LINK_' + linkPlaceholders.length + '___';
+			linkPlaceholders.push({ text: linkText.trim(), url: url.trim() });
+			return placeholder;
+		});
+		
+		// Now escape HTML on the text with placeholders
+		var html = escapeHtml(processedText);
+		
+		// Restore links as proper HTML anchor tags with beautiful styling
+		for (var i = 0; i < linkPlaceholders.length; i++) {
+			var link = linkPlaceholders[i];
+			var linkHtml = '<a href="' + escapeHtml(link.url) + '" target="_blank" rel="noopener noreferrer" class="reg-answer-link">' + 
+				escapeHtml(link.text) + 
+				'<svg class="reg-link-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg></a>';
+			html = html.replace('___LINK_' + i + '___', linkHtml);
+		}
+		
+		// Bold text: **text** -> <strong>text</strong>
+		html = html.replace(/\*\*([^*]+)\*\*/g, '<strong class="reg-answer-bold">$1</strong>');
+		
+		// Citations: [1], [2] -> clickable badges
+		html = html.replace(/\[(\d+)\]/g, '<span class="reg-citation-inline" onclick="scrollToSource($1)" title="View source $1">$1</span>');
+		
+		// Handle bullet points/lists
+		html = html.replace(/^\s*[-•]\s+(.+)$/gm, '<li>$1</li>');
+		html = html.replace(/(<li>.*<\/li>\n?)+/g, '<ul class="reg-answer-list">$&</ul>');
+		
+		// Line breaks
+		html = html.replace(/\n\n/g, '</p><p>');
+		html = html.replace(/\n/g, '<br>');
+		
+		// Wrap in paragraph
+		if (!html.startsWith('<p>')) {
+			html = '<p>' + html + '</p>';
+		}
+		
+		return html;
+	}
+	
+	// Truncate text helper
+	function truncateText(text, maxLen) {
+		if (!text || text.length <= maxLen) return text;
+		return text.substring(0, maxLen).trim() + '...';
+	}
+	
+	// Global function to toggle source card expansion
+	window.toggleSourceCard = function(sourceId) {
+		var card = document.querySelector('[data-source-id="' + sourceId + '"]');
+		if (card) {
+			var isExpanded = card.getAttribute('data-expanded') === 'true';
+			card.setAttribute('data-expanded', !isExpanded);
+		}
+	};
+	
+	// Global function to scroll to source
+	window.scrollToSource = function(sourceNum) {
+		var cards = document.querySelectorAll('.reg-source-card');
+		var targetCard = cards[sourceNum - 1];
+		if (targetCard) {
+			targetCard.scrollIntoView({ behavior: 'smooth', block: 'center' });
+			targetCard.setAttribute('data-expanded', 'true');
+			// Brief highlight
+			targetCard.classList.add('reg-source-highlight');
+			setTimeout(function() {
+				targetCard.classList.remove('reg-source-highlight');
+			}, 2000);
+		}
+	};
 
 	// Format tool name for display (more readable)
 	function formatToolName(name) {
@@ -1217,7 +1636,8 @@
 				message: userText,
 				mode: state.mode,
 				context: context,
-				conversation_history: getConversationHistory()
+				conversation_history: getConversationHistory(),
+				editor_doc_id: DocIndex.getEditorDocId()
 			};
 			
 			// Create assistant message container
@@ -1354,34 +1774,40 @@
 				}
 				break;
 			
-			case 'tool_call':
-				// Tool was executed (for display)
-				var displayToolItem = { 
-					type: 'tool_call', 
-					id: data.id,
-					name: data.name, 
-					params: data.params, 
-					status: data.status || 'success',
-					result: data.result
-				};
-				
-				// Check if we already have this tool call running
-				var existingToolCall = data.id ? msgContainer.querySelector('.tool-call[data-tool-call-id="' + data.id + '"][data-status="running"]') : null;
-				if (!existingToolCall) {
-					existingToolCall = msgContainer.querySelector('.tool-call[data-status="running"]');
-				}
-				if (existingToolCall) {
-					// Update existing
+		case 'tool_call':
+			// Tool was executed (for display)
+			var displayToolItem = { 
+				type: 'tool_call', 
+				id: data.id,
+				name: data.name, 
+				params: data.params, 
+				status: data.status || 'success',
+				result: data.result
+			};
+			
+			// Check if we already have this tool call (by ID first, then by running status)
+			// Note: We check regardless of status because the frontend may have already
+			// updated the tool call to 'success' before the backend sends the final event
+			var existingToolCall = data.id ? msgContainer.querySelector('.tool-call[data-tool-call-id="' + data.id + '"]') : null;
+			if (!existingToolCall) {
+				// Fallback: look for a running tool call (for backwards compatibility)
+				existingToolCall = msgContainer.querySelector('.tool-call[data-status="running"]');
+			}
+			if (existingToolCall) {
+				// Update existing only if still running
+				if (existingToolCall.getAttribute('data-status') === 'running') {
 					updateToolCallResult(msgContainer, data.id, data.name, { 
 						success: data.status === 'success', 
 						result: data.result 
 					});
-				} else {
-					items.push(displayToolItem);
-					msgContainer.insertAdjacentHTML('beforeend', renderMetadataItem(displayToolItem));
 				}
-				scrollToBottom();
-				break;
+				// If already completed, skip (avoid duplicate updates)
+			} else {
+				items.push(displayToolItem);
+				msgContainer.insertAdjacentHTML('beforeend', renderMetadataItem(displayToolItem));
+			}
+			scrollToBottom();
+			break;
 			
 			case 'content':
 				// Streaming text content
@@ -1680,12 +2106,27 @@
 		// Send message
 		elements.sendBtn.addEventListener('click', sendMessage);
 		elements.chatInput.addEventListener('keydown', function(e) {
+			// Check for @ mention keyboard navigation first
+			if (MentionAutocomplete.handleKeyDown(e, elements.chatInput)) {
+				return;
+			}
 			if (e.key === 'Enter' && !e.shiftKey) {
 				e.preventDefault();
 				sendMessage();
 			}
 		});
-		elements.chatInput.addEventListener('input', autoResizeTextarea);
+		elements.chatInput.addEventListener('input', function() {
+			autoResizeTextarea();
+			// Check for @ mention
+			MentionAutocomplete.checkForMention(elements.chatInput);
+		});
+		
+		// Hide mention dropdown when clicking outside
+		document.addEventListener('click', function(e) {
+			if (!e.target.closest('#mentionDropdown') && !e.target.closest('#chatInput')) {
+				MentionAutocomplete.hide();
+			}
+		});
 		
 		// Stop generation
 		elements.stopBtn.addEventListener('click', stopGeneration);
@@ -1752,6 +2193,590 @@
 	}
 
 	// ============================================
+	// DOCUMENT INDEXING MODULE
+	// ============================================
+	var DocIndex = {
+		// Get or generate editor document ID - tied to the specific Word document
+		getEditorDocId: function() {
+			if (state.editorDocId) return state.editorDocId;
+			
+			// Use the document-specific ID if we have one (set during initialization)
+			// This ties each document to its own chat and reference document session
+			var docSpecificId = sessionStorage.getItem('copilot_doc_specific_id');
+			if (docSpecificId) {
+				state.editorDocId = docSpecificId;
+				return docSpecificId;
+			}
+			
+			// Fallback to localStorage-based ID (for backwards compatibility)
+			var stored = localStorage.getItem('copilot_editor_doc_id');
+			if (stored) {
+				state.editorDocId = stored;
+				return stored;
+			}
+			
+			// Generate a new ID (shouldn't reach here normally)
+			state.editorDocId = 'doc_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+			localStorage.setItem('copilot_editor_doc_id', state.editorDocId);
+			return state.editorDocId;
+		},
+		
+		// Initialize document-specific ID based on document content
+		// Call this once when copilot loads to tie session to the specific document
+		// IMPORTANT: Detects document changes and clears old session when switching documents
+		initDocumentId: async function() {
+			try {
+				// Get a fingerprint of the document to create a unique ID
+				var docFingerprint = await this.getDocumentFingerprint();
+				if (docFingerprint) {
+					var newDocId = 'doc_' + docFingerprint;
+					var previousDocId = sessionStorage.getItem('copilot_doc_specific_id');
+					
+					// Check if document has changed (different fingerprint)
+					if (previousDocId && previousDocId !== newDocId) {
+						console.log('Copilot: Document changed! Old:', previousDocId, 'New:', newDocId);
+						// Clear old session data - new document means fresh start
+						this.clearSessionData();
+					}
+					
+					// Set the new document ID
+					sessionStorage.setItem('copilot_doc_specific_id', newDocId);
+					state.editorDocId = newDocId;
+					console.log('Copilot: Document-specific ID initialized:', newDocId);
+					return newDocId;
+				}
+			} catch (e) {
+				console.warn('Copilot: Could not get document fingerprint, using fallback:', e);
+			}
+			
+			// Fallback to getEditorDocId
+			return this.getEditorDocId();
+		},
+		
+		// Clear session data when switching to a new document
+		clearSessionData: function() {
+			console.log('Copilot: Clearing session data for new document');
+			// Clear the indexed documents list
+			state.indexedDocs = [];
+			// Clear chat state
+			state.chats = [];
+			state.currentChatId = null;
+			state.editorDocId = null;
+			
+			// Update UI to reflect empty state
+			if (elements.indexBadge) {
+				elements.indexBadge.textContent = '0';
+				elements.indexBadge.style.display = 'none';
+			}
+			
+			// Note: We don't clear localStorage here because different documents
+			// have their own chat history stored with document-specific keys
+		},
+		
+		// Get a fingerprint of the document for identification
+		getDocumentFingerprint: async function() {
+			if (window.Asc && window.Asc.plugin && window.Asc.plugin.callCommand) {
+				return new Promise(function(resolve) {
+					window.Asc.plugin.callCommand(function() {
+						var doc = Api.GetDocument();
+						// Get document stats for fingerprinting
+						var allText = '';
+						var elemCount = doc.GetElementsCount ? doc.GetElementsCount() : 0;
+						
+						// Get text from first several paragraphs for fingerprinting
+						for (var i = 0; i < Math.min(elemCount, 10); i++) {
+							var elem = doc.GetElement(i);
+							if (elem && elem.GetText) {
+								var text = elem.GetText();
+								if (text && text.trim()) {
+									allText += text.substring(0, 200);
+								}
+							}
+						}
+						
+						// For empty documents, use a special marker
+						if (!allText.trim() || elemCount === 0) {
+							// Empty document - generate unique ID based on current time
+							// This ensures each new empty document gets its own session
+							return 'empty_' + Date.now().toString(36);
+						}
+						
+						// Create fingerprint from content + element count
+						var fingerprint = allText.substring(0, 500) + '_elems_' + elemCount;
+						
+						// Simple hash function (djb2)
+						var hash = 5381;
+						for (var j = 0; j < fingerprint.length; j++) {
+							var char = fingerprint.charCodeAt(j);
+							hash = ((hash << 5) + hash) + char;
+							hash = hash & hash; // Convert to 32bit integer
+						}
+						return Math.abs(hash).toString(36);
+					}, false, false, resolve);
+				});
+			}
+			// Not in OnlyOffice environment - generate unique ID
+			return 'fallback_' + Date.now().toString(36);
+		},
+		
+		// Fetch list of indexed documents
+		fetchDocuments: async function() {
+			try {
+				var docId = this.getEditorDocId();
+				var response = await fetch(Config.BACKEND_URL + '/api/docindex/' + docId + '/documents');
+				if (!response.ok) throw new Error('Failed to fetch documents');
+				var data = await response.json();
+				state.indexedDocs = data.documents || [];
+				this.updateBadge();
+				return state.indexedDocs;
+			} catch (e) {
+				console.error('Failed to fetch indexed documents:', e);
+				return [];
+			}
+		},
+		
+		// Upload and index a document
+		uploadDocument: async function(file, onProgress) {
+			var docId = this.getEditorDocId();
+			var formData = new FormData();
+			formData.append('file', file);
+			
+			try {
+				onProgress && onProgress('Uploading...', 10);
+				
+				var response = await fetch(Config.BACKEND_URL + '/api/docindex/' + docId + '/upload', {
+					method: 'POST',
+					body: formData
+				});
+				
+				onProgress && onProgress('Processing...', 50);
+				
+				if (!response.ok) throw new Error('Upload failed');
+				var result = await response.json();
+				
+				if (result.success) {
+					onProgress && onProgress('Indexed!', 100);
+					await this.fetchDocuments();
+					return result;
+				} else {
+					throw new Error(result.error || 'Indexing failed');
+				}
+			} catch (e) {
+				console.error('Upload error:', e);
+				throw e;
+			}
+		},
+		
+		// Delete an indexed document
+		deleteDocument: async function(docId) {
+			var editorDocId = this.getEditorDocId();
+			try {
+				var response = await fetch(
+					Config.BACKEND_URL + '/api/docindex/' + editorDocId + '/documents/' + docId,
+					{ method: 'DELETE' }
+				);
+				if (!response.ok) throw new Error('Delete failed');
+				await this.fetchDocuments();
+				return true;
+			} catch (e) {
+				console.error('Delete error:', e);
+				return false;
+			}
+		},
+		
+		// Search indexed documents
+		search: async function(query, docNames) {
+			var editorDocId = this.getEditorDocId();
+			try {
+				var response = await fetch(
+					Config.BACKEND_URL + '/api/docindex/' + editorDocId + '/search',
+					{
+						method: 'POST',
+						headers: { 'Content-Type': 'application/json' },
+						body: JSON.stringify({
+							query: query,
+							document_names: docNames || null,
+							max_results: 5
+						})
+					}
+				);
+				if (!response.ok) throw new Error('Search failed');
+				return await response.json();
+			} catch (e) {
+				console.error('Search error:', e);
+				return { success: false, results: [] };
+			}
+		},
+		
+		// Update the badge count
+		updateBadge: function() {
+			var badge = document.getElementById('indexBadge');
+			if (badge) {
+				var count = state.indexedDocs.length;
+				badge.textContent = count;
+				badge.classList.toggle('hidden', count === 0);
+			}
+		},
+		
+		// Render the documents list in the modal
+		renderDocsList: function() {
+			var listEl = document.getElementById('docsList');
+			var emptyEl = document.getElementById('docsEmpty');
+			var countEl = document.getElementById('docsCount');
+			
+			if (!listEl) return;
+			
+			// Update count
+			if (countEl) {
+				countEl.textContent = state.indexedDocs.length + ' document' + (state.indexedDocs.length !== 1 ? 's' : '');
+			}
+			
+			// Clear list (keep empty message)
+			Array.from(listEl.children).forEach(function(child) {
+				if (child.id !== 'docsEmpty') {
+					child.remove();
+				}
+			});
+			
+			// Show/hide empty message
+			if (emptyEl) {
+				emptyEl.classList.toggle('hidden', state.indexedDocs.length > 0);
+			}
+			
+			// Render documents
+			state.indexedDocs.forEach(function(doc) {
+				var item = document.createElement('div');
+				item.className = 'doc-item';
+				item.innerHTML = 
+					'<div class="doc-icon">' +
+						'<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">' +
+							'<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>' +
+							'<polyline points="14 2 14 8 20 8"/>' +
+						'</svg>' +
+					'</div>' +
+					'<div class="doc-info">' +
+						'<div class="doc-name">' + escapeHtml(doc.filename) + '</div>' +
+						'<div class="doc-meta">' + doc.chunk_count + ' chunks</div>' +
+					'</div>' +
+					'<button class="doc-delete" data-doc-id="' + doc.doc_id + '" title="Remove">' +
+						'<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">' +
+							'<line x1="18" y1="6" x2="6" y2="18"/>' +
+							'<line x1="6" y1="6" x2="18" y2="18"/>' +
+						'</svg>' +
+					'</button>';
+				listEl.appendChild(item);
+			});
+		},
+		
+		// Show the modal
+		showModal: function() {
+			var overlay = document.getElementById('indexModalOverlay');
+			if (overlay) {
+				overlay.classList.remove('hidden');
+				this.fetchDocuments().then(function() {
+					DocIndex.renderDocsList();
+				});
+			}
+		},
+		
+		// Hide the modal
+		hideModal: function() {
+			var overlay = document.getElementById('indexModalOverlay');
+			if (overlay) {
+				overlay.classList.add('hidden');
+			}
+		},
+		
+		// Setup modal event listeners
+		setupModalEvents: function() {
+			var self = this;
+			
+			// Open modal button
+			var openBtn = document.getElementById('indexDocsBtn');
+			if (openBtn) {
+				openBtn.addEventListener('click', function() {
+					self.showModal();
+				});
+			}
+			
+			// Close modal button
+			var closeBtn = document.getElementById('indexModalClose');
+			if (closeBtn) {
+				closeBtn.addEventListener('click', function() {
+					self.hideModal();
+				});
+			}
+			
+			// Close on overlay click
+			var overlay = document.getElementById('indexModalOverlay');
+			if (overlay) {
+				overlay.addEventListener('click', function(e) {
+					if (e.target === overlay) {
+						self.hideModal();
+					}
+				});
+			}
+			
+			// Upload zone
+			var uploadZone = document.getElementById('uploadZone');
+			var fileInput = document.getElementById('fileInput');
+			
+			if (uploadZone && fileInput) {
+				uploadZone.addEventListener('click', function() {
+					fileInput.click();
+				});
+				
+				uploadZone.addEventListener('dragover', function(e) {
+					e.preventDefault();
+					uploadZone.classList.add('drag-over');
+				});
+				
+				uploadZone.addEventListener('dragleave', function() {
+					uploadZone.classList.remove('drag-over');
+				});
+				
+				uploadZone.addEventListener('drop', function(e) {
+					e.preventDefault();
+					uploadZone.classList.remove('drag-over');
+					var files = e.dataTransfer.files;
+					if (files.length > 0) {
+						self.handleFileUpload(files);
+					}
+				});
+				
+				fileInput.addEventListener('change', function() {
+					if (fileInput.files.length > 0) {
+						self.handleFileUpload(fileInput.files);
+					}
+				});
+			}
+			
+			// Delete button clicks (event delegation)
+			var docsList = document.getElementById('docsList');
+			if (docsList) {
+				docsList.addEventListener('click', function(e) {
+					var deleteBtn = e.target.closest('.doc-delete');
+					if (deleteBtn) {
+						var docId = deleteBtn.getAttribute('data-doc-id');
+						if (docId && confirm('Remove this document from the index?')) {
+							self.deleteDocument(docId).then(function() {
+								self.renderDocsList();
+							});
+						}
+					}
+				});
+			}
+		},
+		
+		// Handle file upload
+		handleFileUpload: async function(files) {
+			var self = this;
+			var progressEl = document.getElementById('uploadProgress');
+			var progressFill = document.getElementById('progressFill');
+			var progressText = document.getElementById('progressText');
+			var uploadZone = document.getElementById('uploadZone');
+			
+			if (progressEl) progressEl.classList.remove('hidden');
+			if (uploadZone) uploadZone.style.display = 'none';
+			
+			for (var i = 0; i < files.length; i++) {
+				var file = files[i];
+				try {
+					await self.uploadDocument(file, function(text, pct) {
+						if (progressText) progressText.textContent = file.name + ': ' + text;
+						if (progressFill) progressFill.style.width = pct + '%';
+					});
+				} catch (e) {
+					if (progressText) progressText.textContent = 'Error: ' + e.message;
+				}
+			}
+			
+			// Reset UI after a delay
+			setTimeout(function() {
+				if (progressEl) progressEl.classList.add('hidden');
+				if (progressFill) progressFill.style.width = '0%';
+				if (uploadZone) uploadZone.style.display = '';
+				self.renderDocsList();
+			}, 1000);
+		}
+	};
+	
+	// ============================================
+	// @ MENTION AUTOCOMPLETE
+	// ============================================
+	var MentionAutocomplete = {
+		// Check if we're in a mention context
+		checkForMention: function(inputEl) {
+			var value = inputEl.value;
+			var cursorPos = inputEl.selectionStart;
+			
+			// Look for @ before cursor
+			var textBeforeCursor = value.substring(0, cursorPos);
+			var lastAtIndex = textBeforeCursor.lastIndexOf('@');
+			
+			if (lastAtIndex === -1) {
+				this.hide();
+				return;
+			}
+			
+			// Check if there's a space between @ and cursor (would mean mention ended)
+			var textAfterAt = textBeforeCursor.substring(lastAtIndex + 1);
+			if (textAfterAt.includes(' ') || textAfterAt.includes('\n')) {
+				this.hide();
+				return;
+			}
+			
+			// We have an active mention
+			state.mentionQuery = textAfterAt.toLowerCase();
+			state.mentionStartPos = lastAtIndex;
+			state.selectedMentionIndex = 0;
+			
+			this.show(inputEl);
+		},
+		
+		// Show the dropdown
+		show: function(inputEl) {
+			var dropdown = document.getElementById('mentionDropdown');
+			var list = document.getElementById('mentionList');
+			if (!dropdown || !list) return;
+			
+			// Filter documents
+			var matches = state.indexedDocs.filter(function(doc) {
+				return doc.filename.toLowerCase().includes(state.mentionQuery);
+			});
+			
+			// Build list HTML
+			var html = '';
+			
+			if (matches.length > 0) {
+				matches.forEach(function(doc, idx) {
+					html += '<div class="mention-item' + (idx === state.selectedMentionIndex ? ' selected' : '') + '" data-doc-name="' + escapeHtml(doc.filename) + '">' +
+						'<div class="mention-item-icon">' +
+							'<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">' +
+								'<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>' +
+								'<polyline points="14 2 14 8 20 8"/>' +
+							'</svg>' +
+						'</div>' +
+						'<span class="mention-item-name">' + escapeHtml(doc.filename) + '</span>' +
+					'</div>';
+				});
+			} else if (state.mentionQuery.length > 0) {
+				html = '<div class="mention-empty">No documents match "' + escapeHtml(state.mentionQuery) + '"</div>';
+			}
+			
+			// Add option to index new
+			html += '<div class="mention-add-new" id="mentionAddNew">' +
+				'<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">' +
+					'<line x1="12" y1="5" x2="12" y2="19"/>' +
+					'<line x1="5" y1="12" x2="19" y2="12"/>' +
+				'</svg>' +
+				'<span>Add reference document...</span>' +
+			'</div>';
+			
+			list.innerHTML = html;
+			
+			// Position dropdown near the input
+			var inputRect = inputEl.getBoundingClientRect();
+			dropdown.style.left = inputRect.left + 'px';
+			dropdown.style.bottom = (window.innerHeight - inputRect.top + 8) + 'px';
+			
+			dropdown.classList.remove('hidden');
+			
+			// Add click listeners
+			var items = list.querySelectorAll('.mention-item');
+			items.forEach(function(item) {
+				item.addEventListener('click', function() {
+					var docName = item.getAttribute('data-doc-name');
+					MentionAutocomplete.selectDocument(docName, inputEl);
+				});
+			});
+			
+			var addNew = document.getElementById('mentionAddNew');
+			if (addNew) {
+				addNew.addEventListener('click', function() {
+					MentionAutocomplete.hide();
+					DocIndex.showModal();
+				});
+			}
+		},
+		
+		// Hide the dropdown
+		hide: function() {
+			var dropdown = document.getElementById('mentionDropdown');
+			if (dropdown) {
+				dropdown.classList.add('hidden');
+			}
+			state.mentionStartPos = -1;
+			state.mentionQuery = '';
+		},
+		
+		// Select a document
+		selectDocument: function(docName, inputEl) {
+			if (state.mentionStartPos === -1) return;
+			
+			var value = inputEl.value;
+			var before = value.substring(0, state.mentionStartPos);
+			var after = value.substring(inputEl.selectionStart);
+			
+			// Insert the document reference
+			inputEl.value = before + '@' + docName + ' ' + after;
+			
+			// Move cursor after the inserted text
+			var newPos = state.mentionStartPos + docName.length + 2;
+			inputEl.setSelectionRange(newPos, newPos);
+			inputEl.focus();
+			
+			this.hide();
+		},
+		
+		// Handle keyboard navigation
+		handleKeyDown: function(e, inputEl) {
+			var dropdown = document.getElementById('mentionDropdown');
+			if (!dropdown || dropdown.classList.contains('hidden')) return false;
+			
+			var items = dropdown.querySelectorAll('.mention-item');
+			
+			if (e.key === 'ArrowDown') {
+				e.preventDefault();
+				state.selectedMentionIndex = Math.min(state.selectedMentionIndex + 1, items.length - 1);
+				this.updateSelection(items);
+				return true;
+			}
+			
+			if (e.key === 'ArrowUp') {
+				e.preventDefault();
+				state.selectedMentionIndex = Math.max(state.selectedMentionIndex - 1, 0);
+				this.updateSelection(items);
+				return true;
+			}
+			
+			if (e.key === 'Enter' || e.key === 'Tab') {
+				if (items.length > 0 && items[state.selectedMentionIndex]) {
+					e.preventDefault();
+					var docName = items[state.selectedMentionIndex].getAttribute('data-doc-name');
+					this.selectDocument(docName, inputEl);
+					return true;
+				}
+			}
+			
+			if (e.key === 'Escape') {
+				e.preventDefault();
+				this.hide();
+				return true;
+			}
+			
+			return false;
+		},
+		
+		// Update visual selection
+		updateSelection: function(items) {
+			items.forEach(function(item, idx) {
+				item.classList.toggle('selected', idx === state.selectedMentionIndex);
+			});
+		}
+	};
+
+	// ============================================
 	// INITIALIZATION
 	// ============================================
 	function init() {
@@ -1772,13 +2797,29 @@
 			stopBtn: document.getElementById('stopBtn'),
 			askModeBtn: document.getElementById('askModeBtn'),
 			agentModeBtn: document.getElementById('agentModeBtn'),
-			modeIndicator: document.getElementById('modeIndicator')
+			modeIndicator: document.getElementById('modeIndicator'),
+			// Document indexing elements
+			indexDocsBtn: document.getElementById('indexDocsBtn'),
+			indexBadge: document.getElementById('indexBadge'),
+			indexModalOverlay: document.getElementById('indexModalOverlay'),
+			mentionDropdown: document.getElementById('mentionDropdown')
 		};
 		
-		// Load chats from storage
+		// Setup event listeners (can be done before document ID is ready)
+		setupEventListeners();
+		
+		// Setup document indexing modal events
+		DocIndex.setupModalEvents();
+		
+		// Initialize document-specific ID first, then load chats and documents
+		// This ensures chats and reference docs are tied to the specific Word document
+		DocIndex.initDocumentId().then(function(docId) {
+			console.log('Copilot: Document session initialized for:', docId);
+			
+			// Now load chats for this specific document
 		state.chats = Storage.load();
 		
-		// Create new chat if none exist
+			// Create new chat if none exist for this document
 		if (state.chats.length === 0) {
 			createNewChat();
 		} else {
@@ -1790,8 +2831,21 @@
 			updateChatTitle(chat ? chat.title : 'New Chat');
 		}
 		
-		// Setup event listeners
-		setupEventListeners();
+			// Load indexed docs for this specific document
+			DocIndex.fetchDocuments();
+		}).catch(function(err) {
+			console.warn('Copilot: Document ID init failed, using fallback:', err);
+			// Fallback: load chats with generic storage
+			state.chats = Storage.load();
+			if (state.chats.length === 0) {
+				createNewChat();
+			} else {
+				state.currentChatId = state.chats[0].id;
+				renderChatList();
+				renderMessages();
+			}
+			DocIndex.fetchDocuments();
+		});
 		
 		// Set initial mode
 		setMode('ask');

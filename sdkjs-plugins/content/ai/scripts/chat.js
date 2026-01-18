@@ -714,19 +714,33 @@
 		var $sourcesEl = $container.find('.search_sources');
 		$sourcesEl.empty();
 		
-		var maxSources = Math.min(sources.length, 8);
+		// Show all sources (or up to 20 for performance, but ensure all cited sources are shown)
+		var maxSources = Math.min(sources.length, 20);
+		
+		// Add header if sources exist
+		if (sources.length > 0) {
+			var $header = $('<div class="search_sources_header">' +
+				'<span>Sources (' + sources.length + ')</span>' +
+			'</div>');
+			$sourcesEl.append($header);
+		}
+		
 		for (var i = 0; i < maxSources; i++) {
 			var source = sources[i];
-			var $card = $('<div class="search_source_card" data-id="' + source.id + '">' +
+			var citationNum = i + 1;
+			var sourceId = source.id || 'source-' + i;
+			
+			// Build source card with proper data attributes for citation linking
+			var $card = $('<div class="search_source_card" data-id="' + sourceId + '" data-citation-num="' + citationNum + '">' +
 				'<div class="search_source_header">' +
-					'<span class="search_source_badge">' + (i + 1) + '</span>' +
+					'<span class="search_source_badge">' + citationNum + '</span>' +
 					'<span class="search_source_title">' + escapeHtml(source.title || source.code || 'Source') + '</span>' +
-					'<span class="search_source_type">' + (source.sourceType || 'DOC') + '</span>' +
+					'<span class="search_source_type">' + (source.sourceType || source.source_type || 'DOC') + '</span>' +
 				'</div>' +
-				'<div class="search_source_snippet">' + escapeHtml(source.snippet || (source.fullText ? source.fullText.substring(0, 150) : '')) + '</div>' +
+				'<div class="search_source_snippet">' + escapeHtml(source.snippet || (source.fullText || source.full_text ? (source.fullText || source.full_text).substring(0, 150) : '')) + '</div>' +
 				'<div class="search_source_expanded">' +
-					'<div class="search_source_fulltext">' + escapeHtml(source.fullText || '') + '</div>' +
-					(source.sourceUrl ? '<a href="' + source.sourceUrl + '" target="_blank" class="search_source_link">View source →</a>' : '') +
+					'<div class="search_source_fulltext">' + escapeHtml(source.fullText || source.full_text || '') + '</div>' +
+					(source.sourceUrl || source.url ? '<a href="' + escapeHtml(source.sourceUrl || source.url) + '" target="_blank" rel="noopener noreferrer" class="search_source_link">View source →</a>' : '') +
 				'</div>' +
 			'</div>');
 			
@@ -735,6 +749,14 @@
 			});
 			
 			$sourcesEl.append($card);
+		}
+		
+		// Show message if there are more sources than displayed
+		if (sources.length > maxSources) {
+			var $moreMsg = $('<div class="search_sources_more">' +
+				'<span>Showing ' + maxSources + ' of ' + sources.length + ' sources</span>' +
+			'</div>');
+			$sourcesEl.append($moreMsg);
 		}
 	}
 
@@ -785,11 +807,90 @@
 	}
 
 	function formatAnswerWithCitations(text) {
-		var formatted = text.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
-		formatted = formatted.replace(/\[(\d+)\]/g, '<span class="citation">$1</span>');
+		if (!text) return '';
+		
+		// First escape HTML to prevent XSS
+		var formatted = escapeHtml(text);
+		
+		// Handle markdown links: [text](url) - must be done BEFORE citations to avoid conflicts
+		// This regex matches [text](url) but not [1] citations
+		formatted = formatted.replace(/\[([^\]]+)\]\(([^)]+)\)/g, function(match, linkText, url) {
+			// Check if it's a citation number (just digits)
+			if (/^\d+$/.test(linkText.trim())) {
+				// It's a citation, handle separately
+				return match;
+			}
+			// It's a real link
+			return '<a href="' + escapeHtml(url) + '" target="_blank" rel="noopener noreferrer" class="answer-link">' + linkText + '</a>';
+		});
+		
+		// Handle citations: [1], [2], etc. - clickable badges that scroll to sources
+		formatted = formatted.replace(/\[(\d+)\]/g, function(match, num) {
+			return '<span class="citation" onclick="scrollToSourceCard(' + num + ')" title="View source ' + num + '">' + num + '</span>';
+		});
+		
+		// Handle bold text: **text**
+		formatted = formatted.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+		
+		// Handle line breaks
+		formatted = formatted.replace(/\n\n/g, '</p><p>');
 		formatted = formatted.replace(/\n/g, '<br>');
+		
+		// Wrap in paragraph if not already wrapped
+		if (!formatted.startsWith('<p>') && !formatted.startsWith('<a') && !formatted.startsWith('<strong')) {
+			formatted = '<p>' + formatted + '</p>';
+		}
+		
 		return formatted;
 	}
+	
+	// Function to scroll to a specific source card by citation number
+	function scrollToSourceCard(citationNum) {
+		var $container = $('.search_results_container').last();
+		if (!$container.length) return;
+		
+		// Try to find by data-citation-num attribute first (more reliable)
+		var $targetCard = $container.find('.search_source_card[data-citation-num="' + citationNum + '"]');
+		
+		// Fallback to index-based if attribute not found
+		if (!$targetCard.length) {
+			var $sourceCards = $container.find('.search_source_card');
+			var targetIndex = citationNum - 1; // Convert to 0-based index
+			if (targetIndex >= 0 && targetIndex < $sourceCards.length) {
+				$targetCard = $sourceCards.eq(targetIndex);
+			}
+		}
+		
+		if ($targetCard.length) {
+			// Expand the card if collapsed
+			if (!$targetCard.hasClass('expanded')) {
+				$targetCard.addClass('expanded');
+			}
+			
+			// Scroll to the card smoothly
+			var scrollContainer = $('#chat');
+			if (scrollContainer.length) {
+				var cardTop = $targetCard.position().top + scrollContainer.scrollTop();
+				scrollContainer.animate({
+					scrollTop: cardTop - 50
+				}, 500);
+			} else {
+				// Fallback to window scroll
+				$('html, body').animate({
+					scrollTop: $targetCard.offset().top - 100
+				}, 500);
+			}
+			
+			// Highlight briefly
+			$targetCard.addClass('citation-highlight');
+			setTimeout(function() {
+				$targetCard.removeClass('citation-highlight');
+			}, 2000);
+		}
+	}
+	
+	// Make scrollToSourceCard available globally
+	window.scrollToSourceCard = scrollToSourceCard;
 
 	function formatSearchAnswerForHistory(answer, sources) {
 		var result = answer + '\n\n---\n**Sources:**\n';

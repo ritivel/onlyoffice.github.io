@@ -564,6 +564,12 @@ window.setInit = function() {
 };
 
 window.Asc.plugin.init = async function() {
+	// Open Copilot panel immediately for word editor (before any other initialization)
+	// This ensures the copilot shows first, not the default text settings panel
+	if (Asc.Editor && Asc.Editor.getType && Asc.Editor.getType() === "word") {
+		onOpenCopilotModal();
+	}
+
 	// Check server settings
 	if (window.Asc.plugin.info.aiPluginSettings) {
 		try {
@@ -719,10 +725,7 @@ class Provider extends AI.Provider {\n\
 	}
 
 	await initWithTranslate(1 << 1);
-	// Auto-open Copilot panel by default for word editor (don't depend on onTranslate firing)
-	if (Asc.Editor.getType() === "word") {
-		onOpenCopilotModal();
-	}
+	// Note: Copilot panel is now opened at the start of plugin.init for faster loading
 	clearChatState();
 
 	window.setInit();
@@ -1195,7 +1198,7 @@ function onOpenCopilotModal() {
 	// Valid values: "panelRight" (right side), "panel" (left side), "window" (floating)
 	let variation = {
 		url : 'copilot.html',
-		description : window.Asc.plugin.tr('AI Copilot'),
+		description : window.Asc.plugin.tr('Ritivel Copilot'),
 		isVisual : true,
 		buttons : [],
 		icons: "resources/icons/%theme-name%(theme-default|theme-system|theme-classic-light)/%theme-type%(light|dark)/copilot%state%(normal|active)%scale%(default).png",

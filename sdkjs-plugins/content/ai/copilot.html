@@ -8,7 +8,7 @@
 	<meta charset="UTF-8" />
 	<meta http-equiv="X-UA-Compatible" content="IE=edge,chrome=1">
 	<meta name="viewport" content="width=device-width, initial-scale=1.0">
-	<title>AI Copilot</title>
+	<title>Ritivel Copilot</title>
 	<script type="text/javascript" src="https://onlyoffice.github.io/sdkjs-plugins/v1/plugins.js"></script>
 	<script type="text/javascript" src="https://onlyoffice.github.io/sdkjs-plugins/v1/plugins-ui.js"></script>
 	<script src="vendor/jquery/jquery-3.7.1.min.js"></script>
@@ -58,6 +58,15 @@
 					<span class="header-title" id="chatTitle">New Chat</span>
 				</div>
 				<div class="header-right">
+					<button class="header-btn index-docs-btn" id="indexDocsBtn" title="Reference Documents">
+						<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+							<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+							<polyline points="14 2 14 8 20 8"/>
+							<line x1="12" y1="18" x2="12" y2="12"/>
+							<line x1="9" y1="15" x2="15" y2="15"/>
+						</svg>
+						<span class="index-badge hidden" id="indexBadge">0</span>
+					</button>
 					<button class="header-btn" id="clearChatBtn" title="Clear chat">
 						<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
 							<polyline points="3 6 5 6 21 6"/>
@@ -78,7 +87,7 @@
 							<path d="M2 12l10 5 10-5"/>
 						</svg>
 					</div>
-					<h2 class="welcome-title">AI Copilot</h2>
+					<h2 class="welcome-title">Ritivel Copilot</h2>
 					<p class="welcome-subtitle">Your intelligent document assistant</p>
 					<div class="quick-actions">
 						<button class="quick-action" data-prompt="Summarize this document">
@@ -169,6 +178,61 @@
 				</div>
 			</div>
 		</main>
+	</div>
+
+	<!-- Document Index Modal -->
+	<div class="modal-overlay hidden" id="indexModalOverlay">
+		<div class="modal-container" id="indexModal">
+			<div class="modal-header">
+				<h3 class="modal-title">Reference Documents</h3>
+				<button class="modal-close" id="indexModalClose">
+					<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+						<line x1="18" y1="6" x2="6" y2="18"/>
+						<line x1="6" y1="6" x2="18" y2="18"/>
+					</svg>
+				</button>
+			</div>
+			<div class="modal-body">
+				<div class="upload-zone" id="uploadZone">
+					<div class="upload-icon">
+						<svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+							<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+							<polyline points="17 8 12 3 7 8"/>
+							<line x1="12" y1="3" x2="12" y2="15"/>
+						</svg>
+					</div>
+					<p class="upload-text">Drop files here or click to upload</p>
+					<p class="upload-hint">PDF, DOCX, TXT, MD supported</p>
+					<input type="file" id="fileInput" class="file-input" multiple accept=".pdf,.docx,.txt,.md,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain,text/markdown">
+				</div>
+				<div class="upload-progress hidden" id="uploadProgress">
+					<div class="progress-bar">
+						<div class="progress-fill" id="progressFill"></div>
+					</div>
+					<p class="progress-text" id="progressText">Uploading...</p>
+				</div>
+				<div class="indexed-documents" id="indexedDocuments">
+					<div class="docs-header">
+						<span class="docs-title">Indexed Documents</span>
+						<span class="docs-count" id="docsCount">0 documents</span>
+					</div>
+					<div class="docs-list" id="docsList">
+						<!-- Indexed documents will be listed here -->
+						<div class="docs-empty" id="docsEmpty">
+							<p>No documents indexed yet</p>
+							<p class="docs-empty-hint">Upload documents to reference them with @mention in chat</p>
+						</div>
+					</div>
+				</div>
+			</div>
+		</div>
+	</div>
+
+	<!-- @ Mention Autocomplete Dropdown -->
+	<div class="mention-dropdown hidden" id="mentionDropdown">
+		<div class="mention-list" id="mentionList">
+			<!-- Matching documents will appear here -->
+		</div>
 	</div>
 
 	<script type="text/javascript" src="./scripts/copilot.js"></script>

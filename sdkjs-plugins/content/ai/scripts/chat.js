@@ -45,17 +45,18 @@
 	let currentSearchAbortController = null;	// For cancelling search requests
 
 	// Regulatory Search Configuration
-	// Regulatory Search API - use parent origin for the endpoint
-	const REGULATORY_SEARCH_API = (function() {
+	// Regulatory Search API - unified endpoint via agents-backend
+	// All AI requests go through agents-backend for consistent architecture
+	const AGENTS_BACKEND_URL = (function() {
 		try {
-			// Get the base URL from parent window or current location
-			var baseUrl = window.parent.location.origin || window.location.origin;
-			return baseUrl + '/api/regulatory-search';
+			// Use agents-backend running on port 8000
+			var hostname = window.parent.location.hostname || window.location.hostname;
+			return 'http://' + hostname + ':8000';
 		} catch (e) {
-			// Fallback if cross-origin
-			return '/api/regulatory-search';
+			return 'http://localhost:8000';
 		}
 	})();
+	const REGULATORY_SEARCH_API = AGENTS_BACKEND_URL + '/api/regulatory-search';
 
 	const ErrorCodes = {
 		UNKNOWN: 1
@@ -587,25 +588,25 @@
 			'<div class="search_steps">' +
 				'<div class="search_step" data-step="analyze">' +
 					'<span class="search_step_icon pending"></span>' +
-					'<span>Analyzing query...</span>' +
+					'<span>Analyzing</span>' +
 				'</div>' +
 				'<div class="search_step" data-step="decompose">' +
 					'<span class="search_step_icon pending"></span>' +
-					'<span>Decomposing into sub-queries...</span>' +
+					'<span>Breaking down</span>' +
 				'</div>' +
 				'<div class="search_step" data-step="search">' +
 					'<span class="search_step_icon pending"></span>' +
-					'<span>Searching & reranking...</span>' +
+					'<span>Searching</span>' +
 				'</div>' +
 				'<div class="search_step" data-step="synthesize">' +
 					'<span class="search_step_icon pending"></span>' +
-					'<span>Synthesizing answer...</span>' +
+					'<span>Writing</span>' +
 				'</div>' +
 			'</div>' +
 			'<div class="search_subqueries"></div>' +
 			'<div class="search_sources"></div>' +
 			'<div class="search_answer" style="display: none;">' +
-				'<div class="search_answer_title">📋 Answer</div>' +
+				'<div class="search_answer_title">Answer</div>' +
 				'<div class="search_answer_content"></div>' +
 			'</div>' +
 		'</div>');
@@ -710,37 +711,114 @@
 		}
 	}
 
+	// Store sources globally for citation preview access
+	var globalSources = [];
+	
 	function renderSearchSources($container, sources) {
 		var $sourcesEl = $container.find('.search_sources');
 		$sourcesEl.empty();
 		
-		// Show all sources (or up to 20 for performance, but ensure all cited sources are shown)
-		var maxSources = Math.min(sources.length, 20);
+		// Store sources globally for citation previews
+		globalSources = sources;
 		
-		// Add header if sources exist
-		if (sources.length > 0) {
-			var $header = $('<div class="search_sources_header">' +
-				'<span>Sources (' + sources.length + ')</span>' +
-			'</div>');
-			$sourcesEl.append($header);
-		}
+		if (sources.length === 0) return;
 		
-		for (var i = 0; i < maxSources; i++) {
+		var maxPills = 6; // Show max 6 pills, rest in expanded view
+		var maxCards = Math.min(sources.length, 20);
+		
+		// Add header with toggle
+		var $header = $('<div class="search_sources_header">' +
+			'<span>Sources</span>' +
+			'<span class="search_sources_toggle" data-expanded="false">View all ' + sources.length + '</span>' +
+		'</div>');
+		$sourcesEl.append($header);
+		
+		// Create horizontal scrollable pills container
+		var $pillsContainer = $('<div class="search_sources_pills"></div>');
+		
+		for (var i = 0; i < Math.min(maxPills, sources.length); i++) {
 			var source = sources[i];
 			var citationNum = i + 1;
 			var sourceId = source.id || 'source-' + i;
+			var sourceType = (source.sourceType || source.source_type || 'DOC').toUpperCase();
+			var sourceTitle = source.title || source.code || 'Source ' + citationNum;
+			var sourceUrl = source.sourceUrl || source.url || '';
 			
-			// Build source card with proper data attributes for citation linking
+			// Get favicon or type icon
+			var faviconHtml = getSourceTypeIcon(sourceType);
+			
+			// Get type badge class
+			var typeBadgeClass = getTypeBadgeClass(sourceType);
+			
+			var $pill = $('<div class="search_source_pill" data-id="' + sourceId + '" data-citation-num="' + citationNum + '">' +
+				'<span class="search_source_pill_num">' + citationNum + '</span>' +
+				'<span class="search_source_pill_favicon">' + faviconHtml + '</span>' +
+				'<div class="search_source_pill_content">' +
+					'<div class="search_source_pill_title">' + escapeHtml(sourceTitle) + '</div>' +
+					'<div class="search_source_pill_domain">' + escapeHtml(extractDomain(sourceUrl) || sourceType) + '</div>' +
+				'</div>' +
+				'<span class="search_source_type_badge ' + typeBadgeClass + '">' + sourceType + '</span>' +
+			'</div>');
+			
+			// Add click handler to expand/show details
+			(function(idx, src) {
+				$pill.on('click', function(e) {
+					e.stopPropagation();
+					showSourceModal(src, idx + 1);
+				});
+			})(i, source);
+			
+			$pillsContainer.append($pill);
+		}
+		
+		// Add "more" indicator if there are more sources
+		if (sources.length > maxPills) {
+			var $morePill = $('<div class="search_source_pill" style="background: #f3f4f6; border-style: dashed;">' +
+				'<span class="search_source_pill_num" style="background: #9ca3af;">+' + (sources.length - maxPills) + '</span>' +
+				'<div class="search_source_pill_content">' +
+					'<div class="search_source_pill_title">More sources</div>' +
+					'<div class="search_source_pill_domain">Click to view all</div>' +
+				'</div>' +
+			'</div>');
+			$morePill.on('click', function() {
+				$sourcesEl.find('.search_sources_grid').addClass('visible');
+				$sourcesEl.find('.search_sources_toggle').text('Hide sources').data('expanded', true);
+			});
+			$pillsContainer.append($morePill);
+		}
+		
+		$sourcesEl.append($pillsContainer);
+		
+		// Create expandable grid of source cards
+		var $gridContainer = $('<div class="search_sources_grid"></div>');
+		
+		for (var i = 0; i < maxCards; i++) {
+			var source = sources[i];
+			var citationNum = i + 1;
+			var sourceId = source.id || 'source-' + i;
+			var sourceType = (source.sourceType || source.source_type || 'DOC').toUpperCase();
+			var sourceTitle = source.title || source.code || 'Source ' + citationNum;
+			var sourceUrl = source.sourceUrl || source.url || '';
+			var snippet = source.snippet || (source.fullText || source.full_text ? (source.fullText || source.full_text).substring(0, 200) : '');
+			var fullText = source.fullText || source.full_text || snippet;
+			
+			var typeBadgeClass = getTypeBadgeClass(sourceType);
+			
 			var $card = $('<div class="search_source_card" data-id="' + sourceId + '" data-citation-num="' + citationNum + '">' +
 				'<div class="search_source_header">' +
 					'<span class="search_source_badge">' + citationNum + '</span>' +
-					'<span class="search_source_title">' + escapeHtml(source.title || source.code || 'Source') + '</span>' +
-					'<span class="search_source_type">' + (source.sourceType || source.source_type || 'DOC') + '</span>' +
+					'<div class="search_source_info">' +
+						'<div class="search_source_title">' + escapeHtml(sourceTitle) + '</div>' +
+						'<div class="search_source_meta">' +
+							'<span class="search_source_type ' + typeBadgeClass + '">' + sourceType + '</span>' +
+							(sourceUrl ? '<span>' + escapeHtml(extractDomain(sourceUrl)) + '</span>' : '') +
+						'</div>' +
+					'</div>' +
 				'</div>' +
-				'<div class="search_source_snippet">' + escapeHtml(source.snippet || (source.fullText || source.full_text ? (source.fullText || source.full_text).substring(0, 150) : '')) + '</div>' +
+				'<div class="search_source_snippet">' + escapeHtml(snippet) + '</div>' +
 				'<div class="search_source_expanded">' +
-					'<div class="search_source_fulltext">' + escapeHtml(source.fullText || source.full_text || '') + '</div>' +
-					(source.sourceUrl || source.url ? '<a href="' + escapeHtml(source.sourceUrl || source.url) + '" target="_blank" rel="noopener noreferrer" class="search_source_link">View source →</a>' : '') +
+					'<div class="search_source_fulltext">' + escapeHtml(fullText) + '</div>' +
+					(sourceUrl ? '<a href="' + escapeHtml(sourceUrl) + '" target="_blank" rel="noopener noreferrer" class="search_source_link">Open source ↗</a>' : '') +
 				'</div>' +
 			'</div>');
 			
@@ -748,15 +826,68 @@
 				$(this).toggleClass('expanded');
 			});
 			
-			$sourcesEl.append($card);
+			$gridContainer.append($card);
 		}
 		
-		// Show message if there are more sources than displayed
-		if (sources.length > maxSources) {
-			var $moreMsg = $('<div class="search_sources_more">' +
-				'<span>Showing ' + maxSources + ' of ' + sources.length + ' sources</span>' +
-			'</div>');
-			$sourcesEl.append($moreMsg);
+		$sourcesEl.append($gridContainer);
+		
+		// Toggle handler for showing/hiding grid
+		$header.find('.search_sources_toggle').on('click', function() {
+			var isExpanded = $(this).data('expanded');
+			if (isExpanded) {
+				$gridContainer.removeClass('visible');
+				$(this).text('View all ' + sources.length).data('expanded', false);
+			} else {
+				$gridContainer.addClass('visible');
+				$(this).text('Hide sources').data('expanded', true);
+			}
+		});
+	}
+	
+	function getSourceTypeIcon(sourceType) {
+		var icons = {
+			'ICH': '🏛️',
+			'FDA': '🇺🇸',
+			'EMA': '🇪🇺',
+			'PSG': '📋',
+			'GUIDANCE': '📜',
+			'REGULATION': '⚖️',
+			'DOC': '📄'
+		};
+		return icons[sourceType] || icons['DOC'];
+	}
+	
+	function getTypeBadgeClass(sourceType) {
+		var classes = {
+			'ICH': 'ich',
+			'FDA': 'fda',
+			'EMA': 'ema',
+			'PSG': 'psg'
+		};
+		return classes[sourceType] || 'doc';
+	}
+	
+	function extractDomain(url) {
+		if (!url) return '';
+		try {
+			var domain = url.replace(/^https?:\/\//, '').split('/')[0];
+			return domain.length > 30 ? domain.substring(0, 27) + '...' : domain;
+		} catch (e) {
+			return '';
+		}
+	}
+	
+	function showSourceModal(source, citationNum) {
+		var sourceUrl = source.sourceUrl || source.url || '';
+		var sourceTitle = source.title || source.code || 'Source';
+		var fullText = source.fullText || source.full_text || source.snippet || '';
+		
+		// If URL exists, open in new tab
+		if (sourceUrl) {
+			window.open(sourceUrl, '_blank');
+		} else {
+			// Otherwise, scroll to the card and expand it
+			scrollToSourceCard(citationNum);
 		}
 	}
 
@@ -806,10 +937,47 @@
 		}
 	}
 
+	// Strip internal processing tags from backend response
+	function stripInternalTags(text) {
+		if (!text) return '';
+		
+		// Remove search quality reflection blocks and their content
+		text = text.replace(/<search_quality_reflection>[\s\S]*?<\/search_quality_reflection>/gi, '');
+		
+		// Remove search quality score blocks and their content
+		text = text.replace(/<search_quality_score>[\s\S]*?<\/search_quality_score>/gi, '');
+		
+		// Remove standalone result tags
+		text = text.replace(/<\/?result>/gi, '');
+		
+		// Remove thinking tags if present
+		text = text.replace(/<thinking>[\s\S]*?<\/thinking>/gi, '');
+		
+		// Remove query tags
+		text = text.replace(/<\/?query>/gi, '');
+		
+		// Remove context tags
+		text = text.replace(/<context>[\s\S]*?<\/context>/gi, '');
+		
+		// Remove any other XML-like internal tags with underscores
+		text = text.replace(/<\/?[a-z_]+_[a-z_]+>/gi, '');
+		
+		// Clean up multiple newlines left behind
+		text = text.replace(/\n{3,}/g, '\n\n');
+		
+		// Trim leading/trailing whitespace
+		text = text.trim();
+		
+		return text;
+	}
+
 	function formatAnswerWithCitations(text) {
 		if (!text) return '';
 		
-		// First escape HTML to prevent XSS
+		// First, strip any internal processing tags from the backend
+		text = stripInternalTags(text);
+		
+		// Then escape HTML to prevent XSS
 		var formatted = escapeHtml(text);
 		
 		// Handle markdown links: [text](url) - must be done BEFORE citations to avoid conflicts
@@ -824,9 +992,9 @@
 			return '<a href="' + escapeHtml(url) + '" target="_blank" rel="noopener noreferrer" class="answer-link">' + linkText + '</a>';
 		});
 		
-		// Handle citations: [1], [2], etc. - clickable badges that scroll to sources
+		// Handle citations: [1], [2], etc. - clickable badges with hover preview
 		formatted = formatted.replace(/\[(\d+)\]/g, function(match, num) {
-			return '<span class="citation" onclick="scrollToSourceCard(' + num + ')" title="View source ' + num + '">' + num + '</span>';
+			return '<span class="citation" data-citation-num="' + num + '" onmouseenter="showCitationPreview(event, ' + num + ')" onmouseleave="hideCitationPreview()" onclick="scrollToSourceCard(' + num + ')">' + num + '</span>';
 		});
 		
 		// Handle bold text: **text**
@@ -844,13 +1012,116 @@
 		return formatted;
 	}
 	
+	// Citation preview tooltip element
+	var $citationPreview = null;
+	var citationPreviewTimeout = null;
+	
+	function createCitationPreviewElement() {
+		if ($citationPreview) return;
+		
+		$citationPreview = $('<div class="citation-preview">' +
+			'<div class="citation-preview-header">' +
+				'<span class="citation-preview-num"></span>' +
+				'<div class="citation-preview-info">' +
+					'<div class="citation-preview-title"></div>' +
+					'<div class="citation-preview-meta"></div>' +
+				'</div>' +
+			'</div>' +
+			'<div class="citation-preview-snippet"></div>' +
+			'<a class="citation-preview-link" target="_blank" rel="noopener noreferrer">Open source ↗</a>' +
+		'</div>');
+		
+		$('body').append($citationPreview);
+	}
+	
+	function showCitationPreview(event, citationNum) {
+		if (citationPreviewTimeout) {
+			clearTimeout(citationPreviewTimeout);
+		}
+		
+		var sourceIndex = citationNum - 1;
+		if (sourceIndex < 0 || sourceIndex >= globalSources.length) return;
+		
+		var source = globalSources[sourceIndex];
+		if (!source) return;
+		
+		createCitationPreviewElement();
+		
+		var sourceTitle = source.title || source.code || 'Source ' + citationNum;
+		var sourceType = (source.sourceType || source.source_type || 'DOC').toUpperCase();
+		var sourceUrl = source.sourceUrl || source.url || '';
+		var snippet = source.snippet || (source.fullText || source.full_text ? (source.fullText || source.full_text).substring(0, 250) + '...' : '');
+		
+		$citationPreview.find('.citation-preview-num').text(citationNum);
+		$citationPreview.find('.citation-preview-title').text(sourceTitle);
+		$citationPreview.find('.citation-preview-meta').html(
+			'<span class="search_source_type_badge ' + getTypeBadgeClass(sourceType) + '">' + sourceType + '</span>' +
+			(sourceUrl ? ' · ' + extractDomain(sourceUrl) : '')
+		);
+		$citationPreview.find('.citation-preview-snippet').text(snippet);
+		
+		if (sourceUrl) {
+			$citationPreview.find('.citation-preview-link').attr('href', sourceUrl).show();
+		} else {
+			$citationPreview.find('.citation-preview-link').hide();
+		}
+		
+		// Position the preview near the citation
+		var $target = $(event.target);
+		var targetRect = event.target.getBoundingClientRect();
+		var previewWidth = 320;
+		var previewHeight = $citationPreview.outerHeight() || 180;
+		
+		var left = targetRect.left + targetRect.width / 2 - previewWidth / 2;
+		var top = targetRect.bottom + 8;
+		
+		// Adjust if it goes off screen
+		if (left < 10) left = 10;
+		if (left + previewWidth > window.innerWidth - 10) {
+			left = window.innerWidth - previewWidth - 10;
+		}
+		if (top + previewHeight > window.innerHeight - 10) {
+			top = targetRect.top - previewHeight - 8;
+		}
+		
+		$citationPreview.css({
+			left: left + 'px',
+			top: top + 'px'
+		});
+		
+		// Show with animation
+		setTimeout(function() {
+			$citationPreview.addClass('visible');
+		}, 50);
+	}
+	
+	function hideCitationPreview() {
+		citationPreviewTimeout = setTimeout(function() {
+			if ($citationPreview) {
+				$citationPreview.removeClass('visible');
+			}
+		}, 150);
+	}
+	
+	// Make citation functions available globally
+	window.showCitationPreview = showCitationPreview;
+	window.hideCitationPreview = hideCitationPreview;
+	
 	// Function to scroll to a specific source card by citation number
 	function scrollToSourceCard(citationNum) {
 		var $container = $('.search_results_container').last();
 		if (!$container.length) return;
 		
+		// First, make sure the grid is visible
+		var $grid = $container.find('.search_sources_grid');
+		if (!$grid.hasClass('visible')) {
+			$grid.addClass('visible');
+			$container.find('.search_sources_toggle').text('Hide sources').data('expanded', true);
+		}
+		
 		// Try to find by data-citation-num attribute first (more reliable)
 		var $targetCard = $container.find('.search_source_card[data-citation-num="' + citationNum + '"]');
+		var $targetPill = $container.find('.search_source_pill[data-citation-num="' + citationNum + '"]');
 		
 		// Fallback to index-based if attribute not found
 		if (!$targetCard.length) {
@@ -870,22 +1141,28 @@
 			// Scroll to the card smoothly
 			var scrollContainer = $('#chat');
 			if (scrollContainer.length) {
-				var cardTop = $targetCard.position().top + scrollContainer.scrollTop();
+				var cardTop = $targetCard.position().top + scrollContainer.scrollTop() - 20;
 				scrollContainer.animate({
-					scrollTop: cardTop - 50
-				}, 500);
+					scrollTop: cardTop
+				}, 400);
 			} else {
 				// Fallback to window scroll
 				$('html, body').animate({
 					scrollTop: $targetCard.offset().top - 100
-				}, 500);
+				}, 400);
 			}
 			
 			// Highlight briefly
 			$targetCard.addClass('citation-highlight');
+			if ($targetPill.length) {
+				$targetPill.addClass('citation-highlight');
+			}
 			setTimeout(function() {
 				$targetCard.removeClass('citation-highlight');
-			}, 2000);
+				if ($targetPill.length) {
+					$targetPill.removeClass('citation-highlight');
+				}
+			}, 2500);
 		}
 	}
 	

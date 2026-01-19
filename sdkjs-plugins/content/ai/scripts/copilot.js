@@ -10,9 +10,16 @@
 	// CONFIGURATION
 	// ============================================
 	var Config = {
-		// Backend URL - change this to your deployed backend
-		// Document indexing API is now part of the main backend
-		BACKEND_URL: 'http://98.83.138.45:8000',
+		// Backend URL - dynamically detected based on current hostname
+		// All AI requests go through agents-backend for consistent architecture
+		BACKEND_URL: (function() {
+			try {
+				var hostname = window.parent.location.hostname || window.location.hostname;
+				return 'http://' + hostname + ':8000';
+			} catch (e) {
+				return 'http://localhost:8000';
+			}
+		})(),
 		// Set to true to use dummy responses instead of real backend
 		USE_DUMMY: false
 	};
@@ -582,6 +589,176 @@
 			console.log('Not in OnlyOffice environment');
 			return { success: false, error: 'Not in OnlyOffice environment' };
 		},
+		
+		// Add an endnote (reference) at cursor position OR after specific anchor text
+		'add_endnote': async function(params) {
+			console.log('add_endnote called with:', JSON.stringify(params));
+			if (window.Asc && window.Asc.plugin && window.Asc.plugin.callCommand) {
+				// Handle both reference_text and text parameter names
+				var referenceText = params.reference_text || params.text || '';
+				var anchorText = params.anchor_text || ''; // Optional: text to position after
+				console.log('add_endnote referenceText:', referenceText, 'anchorText:', anchorText);
+				
+				if (!referenceText) {
+					return { success: false, error: 'reference_text is required' };
+				}
+				
+				// Use Asc.scope to pass data to callCommand (critical for serialization)
+				window.Asc.scope.endnoteText = String(referenceText);
+				window.Asc.scope.anchorText = String(anchorText);
+				
+				return new Promise(function(resolve) {
+					// isNoCalc=false ensures document recalculates endnote numbers
+					// isNoUndo=false creates undo point for each endnote
+					window.Asc.plugin.callCommand(function() {
+						var textToAdd = Asc.scope.endnoteText;
+						var anchor = Asc.scope.anchorText;
+						var doc = Api.GetDocument();
+						var logicDoc = doc.Document; // Get internal document for SetDocPosType
+						
+						// IMPORTANT: Ensure we're in the main document body before searching
+						// docpostype_Content = 0x00
+						if (logicDoc && logicDoc.SetDocPosType) {
+							logicDoc.SetDocPosType(0x00); // docpostype_Content
+						}
+						
+						// If anchor_text provided, find it and position cursor after it
+						var anchorFound = false;
+						if (anchor && anchor.length > 0) {
+							var ranges = doc.Search ? doc.Search(anchor, false) : [];
+							if (ranges && ranges.length > 0) {
+								// Select the first match and move cursor to end of it
+								var range = ranges[0];
+								if (range && range.Select) {
+									range.Select(true);
+									anchorFound = true;
+								}
+								// Move cursor to the end of the selected range
+								if (range && range.MoveCursorToPos) {
+									range.MoveCursorToPos(false); // false = move to end
+								}
+							}
+						}
+						
+						// 1. Insert the endnote marker at cursor position
+						doc.AddEndnote();
+						
+						// 2. Get all first paragraphs of endnotes
+						var endnoteParas = doc.GetEndNotesFirstParagraphs();
+						
+						if (endnoteParas && endnoteParas.length > 0) {
+							// 3. Get the LAST one - it's the one we just added
+							var newestEndnote = endnoteParas[endnoteParas.length - 1];
+							
+							// 4. Add the reference text to this paragraph
+							if (newestEndnote && newestEndnote.AddText) {
+								newestEndnote.AddText(textToAdd);
+							}
+						}
+						
+						// CRITICAL: Move cursor back to main document body after adding endnote
+						// This ensures the next add_endnote call can search in the main document
+						if (logicDoc && logicDoc.SetDocPosType) {
+							logicDoc.SetDocPosType(0x00); // docpostype_Content
+							if (logicDoc.RemoveSelection) {
+								logicDoc.RemoveSelection();
+							}
+						}
+						
+						return { success: true, message: 'Endnote added with reference text', anchor_found: anchorFound, anchor_used: anchor || 'cursor position' };
+					}, false, false, function(result) {
+						console.log('add_endnote result:', result);
+						resolve(result || { success: true });
+					});
+				});
+			}
+			return { success: false, error: 'Not in OnlyOffice environment' };
+		},
+		
+		// Add a footnote at cursor position OR after specific anchor text
+		'add_footnote': async function(params) {
+			console.log('add_footnote called with:', JSON.stringify(params));
+			if (window.Asc && window.Asc.plugin && window.Asc.plugin.callCommand) {
+				// Handle both reference_text and text parameter names
+				var referenceText = params.reference_text || params.text || '';
+				var anchorText = params.anchor_text || ''; // Optional: text to position after
+				console.log('add_footnote referenceText:', referenceText, 'anchorText:', anchorText);
+				
+				if (!referenceText) {
+					return { success: false, error: 'reference_text is required' };
+				}
+				
+				// Use Asc.scope to pass data to callCommand (critical for serialization)
+				window.Asc.scope.footnoteText = String(referenceText);
+				window.Asc.scope.anchorText = String(anchorText);
+				
+				return new Promise(function(resolve) {
+					// isNoCalc=false ensures document recalculates footnote numbers
+					// isNoUndo=false creates undo point for each footnote
+					window.Asc.plugin.callCommand(function() {
+						var textToAdd = Asc.scope.footnoteText;
+						var anchor = Asc.scope.anchorText;
+						var doc = Api.GetDocument();
+						var logicDoc = doc.Document; // Get internal document for SetDocPosType
+						
+						// IMPORTANT: Ensure we're in the main document body before searching
+						// docpostype_Content = 0x00
+						if (logicDoc && logicDoc.SetDocPosType) {
+							logicDoc.SetDocPosType(0x00); // docpostype_Content
+						}
+						
+						// If anchor_text provided, find it and position cursor after it
+						var anchorFound = false;
+						if (anchor && anchor.length > 0) {
+							var ranges = doc.Search ? doc.Search(anchor, false) : [];
+							if (ranges && ranges.length > 0) {
+								// Select the first match and move cursor to end of it
+								var range = ranges[0];
+								if (range && range.Select) {
+									range.Select(true);
+									anchorFound = true;
+								}
+								// Move cursor to the end of the selected range
+								if (range && range.MoveCursorToPos) {
+									range.MoveCursorToPos(false); // false = move to end
+								}
+							}
+						}
+						
+						// 1. Insert the footnote marker at cursor position
+						doc.AddFootnote();
+						
+						// 2. Get all first paragraphs of footnotes
+						var footnoteParas = doc.GetFootnotesFirstParagraphs();
+						
+						if (footnoteParas && footnoteParas.length > 0) {
+							// 3. Get the LAST one - it's the one we just added
+							var newestFootnote = footnoteParas[footnoteParas.length - 1];
+							
+							// 4. Add the reference text to this paragraph
+							if (newestFootnote && newestFootnote.AddText) {
+								newestFootnote.AddText(textToAdd);
+							}
+						}
+						
+						// CRITICAL: Move cursor back to main document body after adding footnote
+						// This ensures the next add_footnote call can search in the main document
+						if (logicDoc && logicDoc.SetDocPosType) {
+							logicDoc.SetDocPosType(0x00); // docpostype_Content
+							if (logicDoc.RemoveSelection) {
+								logicDoc.RemoveSelection();
+							}
+						}
+						
+						return { success: true, message: 'Footnote added with reference text', anchor_found: anchorFound, anchor_used: anchor || 'cursor position' };
+					}, false, false, function(result) {
+						console.log('add_footnote result:', result);
+						resolve(result || { success: true });
+					});
+				});
+			}
+			return { success: false, error: 'Not in OnlyOffice environment' };
+		},
 			
 			'replace_selection': async function(params) {
 				console.log('replace_selection called with:', params);
@@ -726,6 +903,75 @@
 					});
 				}
 				return { success: false, error: 'Not in OnlyOffice environment' };
+			},
+			
+			// =========================================================================
+			// EXECUTE_SDKJS: Execute arbitrary JavaScript code in document context
+			// This is the primary tool for complex document manipulation
+			// =========================================================================
+			'execute_sdkjs': async function(params) {
+				console.log('execute_sdkjs called with:', params);
+				
+				if (!params || !params.code) {
+					return { success: false, error: 'code parameter is required' };
+				}
+				
+				var code = params.code;
+				var needsRecalc = params.needs_recalc !== false; // Default true
+				var needsExecuteMethod = !!params.needs_execute_method;
+				
+				// If using executeMethod (for PasteHtml, PasteText, etc.)
+				if (needsExecuteMethod && params.execute_method_name) {
+					if (window.Asc && window.Asc.plugin && window.Asc.plugin.executeMethod) {
+						return new Promise(function(resolve) {
+							var methodName = params.execute_method_name;
+							var methodArgs = params.execute_method_args || [];
+							console.log('Executing method:', methodName, 'with args:', methodArgs);
+							window.Asc.plugin.executeMethod(methodName, methodArgs, function(result) {
+								console.log('executeMethod result:', result);
+								resolve({ success: true, result: result, method: methodName });
+							});
+						});
+					}
+					return { success: false, error: 'executeMethod not available' };
+				}
+				
+				// Execute arbitrary SDKJS code via callCommand
+				if (window.Asc && window.Asc.plugin && window.Asc.plugin.callCommand) {
+					return new Promise(function(resolve) {
+						try {
+							// Wrap the code in a function and execute it
+							// The code should return a value which becomes the result
+							var wrappedCode = '(function() {\n' +
+								'try {\n' +
+								code + '\n' +
+								'} catch (e) {\n' +
+								'  return { success: false, error: e.message || String(e) };\n' +
+								'}\n' +
+								'})()';
+							
+							console.log('Executing SDKJS code:', wrappedCode.substring(0, 500) + '...');
+							
+							// Create a function from the wrapped code
+							var execFn = new Function('return ' + wrappedCode);
+							
+							window.Asc.plugin.callCommand(execFn, needsRecalc, false, function(result) {
+								console.log('callCommand result:', result);
+								// If result is already an object with success field, use it
+								if (result && typeof result === 'object' && 'success' in result) {
+									resolve(result);
+								} else {
+									resolve({ success: true, result: result });
+								}
+							});
+						} catch (e) {
+							console.error('execute_sdkjs error:', e);
+							resolve({ success: false, error: e.message || String(e) });
+						}
+					});
+				}
+				
+				return { success: false, error: 'Not in OnlyOffice environment' };
 			}
 		},
 		
@@ -778,6 +1024,11 @@
 		return html;
 	}
 
+	// ============================================
+	// TRACEABILITY: Wrap source-derived content with metadata
+	// ============================================
+	
+	
 	// Convert markdown tables to HTML tables
 	function convertMarkdownTables(md) {
 		if (!md) return '';
@@ -960,9 +1211,47 @@
 		}
 	}
 
+	// Strip internal processing tags from backend response
+	function stripInternalTags(text) {
+		if (!text) return '';
+		
+		// Remove search quality reflection blocks and their content
+		text = text.replace(/<search_quality_reflection>[\s\S]*?<\/search_quality_reflection>/gi, '');
+		
+		// Remove search quality score blocks and their content
+		text = text.replace(/<search_quality_score>[\s\S]*?<\/search_quality_score>/gi, '');
+		
+		// Remove standalone result tags
+		text = text.replace(/<\/?result>/gi, '');
+		
+		// Remove thinking tags if present
+		text = text.replace(/<thinking>[\s\S]*?<\/thinking>/gi, '');
+		
+		// Remove query tags
+		text = text.replace(/<\/?query>/gi, '');
+		
+		// Remove context tags
+		text = text.replace(/<context>[\s\S]*?<\/context>/gi, '');
+		
+		// Remove any other XML-like internal tags (be careful not to remove legitimate HTML-like content)
+		// Only target specific internal tags with underscores that are clearly not HTML
+		text = text.replace(/<\/?[a-z_]+_[a-z_]+>/gi, '');
+		
+		// Clean up multiple newlines left behind
+		text = text.replace(/\n{3,}/g, '\n\n');
+		
+		// Trim leading/trailing whitespace
+		text = text.trim();
+		
+		return text;
+	}
+
 	// Simple markdown parser with proper link support
 	function parseMarkdown(text) {
 		if (!text) return '';
+		
+		// First, strip any internal processing tags from the backend
+		text = stripInternalTags(text);
 		
 		// Process markdown links BEFORE escaping HTML to preserve them
 		// Match [text](url) pattern and extract parts
@@ -1456,6 +1745,9 @@
 	// Format answer text with clickable citation badges and proper links
 	function formatAnswerWithCitations(text) {
 		if (!text) return '';
+		
+		// First, strip any internal processing tags from the backend
+		text = stripInternalTags(text);
 		
 		// Process markdown links BEFORE escaping HTML to preserve them
 		// Match [text](url) pattern and extract parts
@@ -2810,6 +3102,7 @@
 		
 		// Setup document indexing modal events
 		DocIndex.setupModalEvents();
+		
 		
 		// Initialize document-specific ID first, then load chats and documents
 		// This ensures chats and reference docs are tied to the specific Word document

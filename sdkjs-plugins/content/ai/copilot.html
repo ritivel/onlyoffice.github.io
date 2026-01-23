@@ -8,7 +8,7 @@
 	<meta charset="UTF-8" />
 	<meta http-equiv="X-UA-Compatible" content="IE=edge,chrome=1">
 	<meta name="viewport" content="width=device-width, initial-scale=1.0">
-	<title>Ritivel Copilot</title>
+	<title>Riti</title>
 	<script type="text/javascript" src="https://onlyoffice.github.io/sdkjs-plugins/v1/plugins.js"></script>
 	<script type="text/javascript" src="https://onlyoffice.github.io/sdkjs-plugins/v1/plugins-ui.js"></script>
 	<script src="vendor/jquery/jquery-3.7.1.min.js"></script>
@@ -20,7 +20,7 @@
 <body class="copilot-body">
 	<div class="copilot-app">
 		<!-- Sidebar - Chat History -->
-		<aside class="copilot-sidebar" id="sidebar">
+		<aside class="copilot-sidebar collapsed" id="sidebar">
 			<div class="sidebar-header">
 				<button class="sidebar-toggle" id="sidebarToggle" title="Toggle sidebar">
 					<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -58,12 +58,11 @@
 					<span class="header-title" id="chatTitle">New Chat</span>
 				</div>
 				<div class="header-right">
-					<button class="header-btn index-docs-btn" id="indexDocsBtn" title="Reference Documents">
+					<button class="header-btn index-docs-btn" id="indexDocsBtn" title="Connect Internal Data">
 						<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-							<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
-							<polyline points="14 2 14 8 20 8"/>
-							<line x1="12" y1="18" x2="12" y2="12"/>
-							<line x1="9" y1="15" x2="15" y2="15"/>
+							<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+							<polyline points="17 8 12 3 7 8"/>
+							<line x1="12" y1="3" x2="12" y2="15"/>
 						</svg>
 						<span class="index-badge hidden" id="indexBadge">0</span>
 					</button>
@@ -80,14 +79,14 @@
 			<div class="messages-container" id="messagesContainer">
 				<!-- Welcome Screen -->
 				<div class="welcome-screen" id="welcomeScreen">
-					<div class="welcome-icon">
+					<!-- <div class="welcome-icon">
 						<svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
 							<path d="M12 2L2 7l10 5 10-5-10-5z"/>
 							<path d="M2 17l10 5 10-5"/>
 							<path d="M2 12l10 5 10-5"/>
 						</svg>
-					</div>
-					<h2 class="welcome-title">Ritivel Copilot</h2>
+					</div> -->
+					<h2 class="welcome-title">Riti</h2>
 					<p class="welcome-subtitle">Your intelligent document assistant</p>
 					<div class="quick-actions">
 						<button class="quick-action" data-prompt="Summarize this document">
@@ -144,7 +143,7 @@
 						<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
 							<path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/>
 						</svg>
-						Agent
+						Edit
 					</button>
 				</div>
 
@@ -184,7 +183,7 @@
 	<div class="modal-overlay hidden" id="indexModalOverlay">
 		<div class="modal-container" id="indexModal">
 			<div class="modal-header">
-				<h3 class="modal-title">Reference Documents</h3>
+				<h3 class="modal-title">Connect Internal Data</h3>
 				<button class="modal-close" id="indexModalClose">
 					<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
 						<line x1="18" y1="6" x2="6" y2="18"/>

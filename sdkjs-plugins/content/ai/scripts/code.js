@@ -1198,7 +1198,7 @@ function onOpenCopilotModal() {
 	// Valid values: "panelRight" (right side), "panel" (left side), "window" (floating)
 	let variation = {
 		url : 'copilot.html',
-		description : window.Asc.plugin.tr('Ritivel Copilot'),
+		description : window.Asc.plugin.tr('Riti'),
 		isVisual : true,
 		buttons : [],
 		icons: "resources/icons/%theme-name%(theme-default|theme-system|theme-classic-light)/%theme-type%(light|dark)/copilot%state%(normal|active)%scale%(default).png",

@@ -32,15 +32,57 @@
 		chats: [],
 		mode: 'ask', // 'ask' or 'agent'
 		isGenerating: false,
-		sidebarCollapsed: false,
+		sidebarCollapsed: true,
 		abortController: null, // For cancelling fetch requests
 		// Document indexing state
 		editorDocId: null, // Current document ID for indexing
 		indexedDocs: [], // List of indexed documents
 		mentionQuery: '', // Current @ mention search query
 		mentionStartPos: -1, // Position where @ was typed
-		selectedMentionIndex: 0 // Currently selected item in mention dropdown
+		selectedMentionIndex: 0, // Currently selected item in mention dropdown
+		// Progress stages state
+		currentStage: null,
+		completedStages: [],
+		progressContainerId: null,
+		// Sources collected from tool calls for current message (for numbered citations)
+		currentMessageSources: []
 	};
+
+	// ============================================
+	// PROGRESS STAGES DEFINITION
+	// ============================================
+	var AGENT_STAGES = [
+		{ 
+			id: 'understanding', 
+			icon: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2a8 8 0 0 1 8 8c0 2.5-1.2 4.8-3 6.2V19a2 2 0 0 1-2 2h-6a2 2 0 0 1-2-2v-2.8C5.2 14.8 4 12.5 4 10a8 8 0 0 1 8-8z"/><path d="M12 2v4"/><path d="M9 21v-2"/><path d="M15 21v-2"/></svg>',
+			label: 'Understanding Query', 
+			description: 'Analyzing your question...' 
+		},
+		{ 
+			id: 'searching', 
+			icon: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>',
+			label: 'Searching Knowledge', 
+			description: 'Querying regulatory databases...' 
+		},
+		{ 
+			id: 'sources', 
+			icon: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/><path d="M8 7h8"/><path d="M8 11h6"/></svg>',
+			label: 'Processing Sources', 
+			description: 'Reviewing relevant documents...' 
+		},
+		{ 
+			id: 'synthesizing', 
+			icon: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 19l7-7 3 3-7 7-3-3z"/><path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z"/><path d="M2 2l7.586 7.586"/></svg>',
+			label: 'Synthesizing Answer', 
+			description: 'Generating comprehensive response...' 
+		},
+		{ 
+			id: 'complete', 
+			icon: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>',
+			label: 'Complete', 
+			description: 'Response ready' 
+		}
+	];
 
 	// ============================================
 	// DOM ELEMENTS
@@ -90,6 +132,73 @@
 			// 1 inch = 25.4 mm; 1 inch = 914400 EMU
 			return Math.round((mm * 914400) / 25.4);
 		},
+		
+		// AI Authorship helper - uses the SDK's SetAssistantTrackRevisions API
+		setAIAuthor: function() {
+			return new Promise(function(resolve) {
+				if (window.Asc && window.Asc.plugin && window.Asc.plugin.callCommand) {
+					console.log('[AI Authorship] Calling SetAssistantTrackRevisions(true, "Riti-AI")');
+					window.Asc.plugin.callCommand(function() {
+						// DO NOT add console.log here - this function runs in document context
+						return Api.GetDocument().SetAssistantTrackRevisions(true, "Riti-AI");
+					}, false, true, function(result) {
+						console.log('[AI Authorship] Set AI author completed, result:', result);
+						resolve();
+					});
+				} else {
+					console.log('[AI Authorship] Asc.plugin.callCommand not available');
+					resolve();
+				}
+			});
+		},
+		
+		// Restore original user as author after AI edits
+		restoreUserAuthor: function() {
+			return new Promise(function(resolve) {
+				if (window.Asc && window.Asc.plugin && window.Asc.plugin.callCommand) {
+					// Add delay to ensure the edit operation fully completes
+					console.log('[AI Authorship] Scheduling restore in 200ms');
+					setTimeout(function() {
+						console.log('[AI Authorship] Calling SetAssistantTrackRevisions(false)');
+						window.Asc.plugin.callCommand(function() {
+							// DO NOT add console.log here - this function runs in document context
+							return Api.GetDocument().SetAssistantTrackRevisions(false);
+						}, false, true, function(result) {
+							console.log('[AI Authorship] Restore completed, result:', result);
+							resolve();
+						});
+					}, 200);
+				} else {
+					console.log('[AI Authorship] Asc.plugin.callCommand not available for restore');
+					resolve();
+				}
+			});
+		},
+		
+		// Wrapper to execute an edit operation with AI authorship
+		executeWithAIAuthor: async function(editFn) {
+			console.log('[AI Authorship] === Starting AI edit operation ===');
+			await this.setAIAuthor();
+			console.log('[AI Authorship] AI author set, now executing edit function');
+			var result;
+			var error;
+			try {
+				result = await editFn();
+				console.log('[AI Authorship] Edit function completed successfully');
+			} catch (e) {
+				error = e;
+				console.error('[AI Authorship] Error during edit:', e);
+			}
+			// Always restore user, even after errors
+			console.log('[AI Authorship] About to restore user');
+			await this.restoreUserAuthor();
+			console.log('[AI Authorship] === AI edit operation complete ===');
+			if (error) {
+				throw error;
+			}
+			return result;
+		},
+		
 		tools: {
 			'get_selected_text': async function() {
 				// Try to get selected text from OnlyOffice
@@ -337,9 +446,12 @@
 					}
 					html += '</table>';
 					
-					return new Promise(function(resolve) {
-						window.Asc.plugin.executeMethod('PasteHtml', [html], function(result) {
-							resolve({ success: true, rows: rows, cols: cols, message: 'Table inserted' });
+					// Wrap edit with AI authorship
+					return ToolExecutor.executeWithAIAuthor(async function() {
+						return new Promise(function(resolve) {
+							window.Asc.plugin.executeMethod('PasteHtml', [html], function(result) {
+								resolve({ success: true, rows: rows, cols: cols, message: 'Table inserted' });
+							});
 						});
 					});
 				}
@@ -349,37 +461,40 @@
 			'insert_image': async function(params) {
 				if (window.Asc && window.Asc.plugin && window.Asc.plugin.callCommand) {
 					var self = this;
-					return new Promise(function(resolve) {
-						window.Asc.plugin.callCommand(function() {
-							var src = params && params.image_src ? String(params.image_src) : '';
-							if (!src) return { success: false, error: 'image_src is required' };
-							var wmm = (params && params.width_mm) ? Number(params.width_mm) : 50;
-							var hmm = (params && params.height_mm) ? Number(params.height_mm) : 50;
-							var wEmu = self.mmToEmu(wmm);
-							var hEmu = self.mmToEmu(hmm);
-							var img = Api.CreateImage ? Api.CreateImage(src, wEmu, hEmu) : null;
-							if (!img) return { success: false, error: 'CreateImage failed' };
+					// Wrap edit with AI authorship
+					return ToolExecutor.executeWithAIAuthor(async function() {
+						return new Promise(function(resolve) {
+							window.Asc.plugin.callCommand(function() {
+								var src = params && params.image_src ? String(params.image_src) : '';
+								if (!src) return { success: false, error: 'image_src is required' };
+								var wmm = (params && params.width_mm) ? Number(params.width_mm) : 50;
+								var hmm = (params && params.height_mm) ? Number(params.height_mm) : 50;
+								var wEmu = self.mmToEmu(wmm);
+								var hEmu = self.mmToEmu(hmm);
+								var img = Api.CreateImage ? Api.CreateImage(src, wEmu, hEmu) : null;
+								if (!img) return { success: false, error: 'CreateImage failed' };
 
-							var doc = Api.GetDocument();
-							var para = doc.GetCurrentParagraph ? doc.GetCurrentParagraph() : null;
-							if (para && para.Push) {
-								para.Push(img);
-							} else {
-								return { success: false, error: 'Could not insert image at cursor' };
-							}
+								var doc = Api.GetDocument();
+								var para = doc.GetCurrentParagraph ? doc.GetCurrentParagraph() : null;
+								if (para && para.Push) {
+									para.Push(img);
+								} else {
+									return { success: false, error: 'Could not insert image at cursor' };
+								}
 
-							if (params && params.add_caption) {
-								var captionText = params.caption_text ? String(params.caption_text) : '';
-								var captionLabel = params.caption_label ? String(params.caption_label) : 'Figure';
-								try {
-									var after = doc.GetCurrentParagraph ? doc.GetCurrentParagraph() : null;
-									if (after && after.AddCaption) {
-										after.AddCaption(captionText, captionLabel, false, 'Arabic', false, 0, 'hyphen');
-									}
-								} catch (e) {}
-							}
-							return { success: true };
-						}, true, false, resolve);
+								if (params && params.add_caption) {
+									var captionText = params.caption_text ? String(params.caption_text) : '';
+									var captionLabel = params.caption_label ? String(params.caption_label) : 'Figure';
+									try {
+										var after = doc.GetCurrentParagraph ? doc.GetCurrentParagraph() : null;
+										if (after && after.AddCaption) {
+											after.AddCaption(captionText, captionLabel, false, 'Arabic', false, 0, 'hyphen');
+										}
+									} catch (e) {}
+								}
+								return { success: true };
+							}, true, false, resolve);
+						});
 					});
 				}
 				return { success: false, error: 'Not in OnlyOffice environment' };
@@ -560,31 +675,34 @@
 				var text = params.text;
 				var format = params.format || 'plain';
 				
-				if (format === 'html') {
-					return new Promise(function(resolve) {
-						window.Asc.plugin.executeMethod('PasteHtml', [text], function(result) {
-							console.log('PasteHtml result:', result);
-							resolve({ success: true, message: 'HTML inserted' });
+				// Wrap edit with AI authorship
+				return ToolExecutor.executeWithAIAuthor(async function() {
+					if (format === 'html') {
+						return new Promise(function(resolve) {
+							window.Asc.plugin.executeMethod('PasteHtml', [text], function(result) {
+								console.log('PasteHtml result:', result);
+								resolve({ success: true, message: 'HTML inserted' });
+							});
 						});
-					});
-				} else if (format === 'markdown') {
-					// Convert markdown to HTML
-					var html = markdownToHtml(text);
-					return new Promise(function(resolve) {
-						window.Asc.plugin.executeMethod('PasteHtml', [html], function(result) {
-							console.log('PasteHtml (markdown) result:', result);
-							resolve({ success: true, message: 'Markdown inserted as HTML' });
+					} else if (format === 'markdown') {
+						// Convert markdown to HTML
+						var html = markdownToHtml(text);
+						return new Promise(function(resolve) {
+							window.Asc.plugin.executeMethod('PasteHtml', [html], function(result) {
+								console.log('PasteHtml (markdown) result:', result);
+								resolve({ success: true, message: 'Markdown inserted as HTML' });
+							});
 						});
-					});
-				} else {
-					// Plain text
-					return new Promise(function(resolve) {
-						window.Asc.plugin.executeMethod('PasteText', [text], function(result) {
-							console.log('PasteText result:', result);
-							resolve({ success: true, message: 'Text inserted' });
+					} else {
+						// Plain text
+						return new Promise(function(resolve) {
+							window.Asc.plugin.executeMethod('PasteText', [text], function(result) {
+								console.log('PasteText result:', result);
+								resolve({ success: true, message: 'Text inserted' });
+							});
 						});
-					});
-				}
+					}
+				});
 			}
 			console.log('Not in OnlyOffice environment');
 			return { success: false, error: 'Not in OnlyOffice environment' };
@@ -607,68 +725,71 @@
 				window.Asc.scope.endnoteText = String(referenceText);
 				window.Asc.scope.anchorText = String(anchorText);
 				
-				return new Promise(function(resolve) {
-					// isNoCalc=false ensures document recalculates endnote numbers
-					// isNoUndo=false creates undo point for each endnote
-					window.Asc.plugin.callCommand(function() {
-						var textToAdd = Asc.scope.endnoteText;
-						var anchor = Asc.scope.anchorText;
-						var doc = Api.GetDocument();
-						var logicDoc = doc.Document; // Get internal document for SetDocPosType
-						
-						// IMPORTANT: Ensure we're in the main document body before searching
-						// docpostype_Content = 0x00
-						if (logicDoc && logicDoc.SetDocPosType) {
-							logicDoc.SetDocPosType(0x00); // docpostype_Content
-						}
-						
-						// If anchor_text provided, find it and position cursor after it
-						var anchorFound = false;
-						if (anchor && anchor.length > 0) {
-							var ranges = doc.Search ? doc.Search(anchor, false) : [];
-							if (ranges && ranges.length > 0) {
-								// Select the first match and move cursor to end of it
-								var range = ranges[0];
-								if (range && range.Select) {
-									range.Select(true);
-									anchorFound = true;
-								}
-								// Move cursor to the end of the selected range
-								if (range && range.MoveCursorToPos) {
-									range.MoveCursorToPos(false); // false = move to end
-								}
-							}
-						}
-						
-						// 1. Insert the endnote marker at cursor position
-						doc.AddEndnote();
-						
-						// 2. Get all first paragraphs of endnotes
-						var endnoteParas = doc.GetEndNotesFirstParagraphs();
-						
-						if (endnoteParas && endnoteParas.length > 0) {
-							// 3. Get the LAST one - it's the one we just added
-							var newestEndnote = endnoteParas[endnoteParas.length - 1];
+				// Wrap edit with AI authorship
+				return ToolExecutor.executeWithAIAuthor(async function() {
+					return new Promise(function(resolve) {
+						// isNoCalc=false ensures document recalculates endnote numbers
+						// isNoUndo=false creates undo point for each endnote
+						window.Asc.plugin.callCommand(function() {
+							var textToAdd = Asc.scope.endnoteText;
+							var anchor = Asc.scope.anchorText;
+							var doc = Api.GetDocument();
+							var logicDoc = doc.Document; // Get internal document for SetDocPosType
 							
-							// 4. Add the reference text to this paragraph
-							if (newestEndnote && newestEndnote.AddText) {
-								newestEndnote.AddText(textToAdd);
+							// IMPORTANT: Ensure we're in the main document body before searching
+							// docpostype_Content = 0x00
+							if (logicDoc && logicDoc.SetDocPosType) {
+								logicDoc.SetDocPosType(0x00); // docpostype_Content
 							}
-						}
-						
-						// CRITICAL: Move cursor back to main document body after adding endnote
-						// This ensures the next add_endnote call can search in the main document
-						if (logicDoc && logicDoc.SetDocPosType) {
-							logicDoc.SetDocPosType(0x00); // docpostype_Content
-							if (logicDoc.RemoveSelection) {
-								logicDoc.RemoveSelection();
+							
+							// If anchor_text provided, find it and position cursor after it
+							var anchorFound = false;
+							if (anchor && anchor.length > 0) {
+								var ranges = doc.Search ? doc.Search(anchor, false) : [];
+								if (ranges && ranges.length > 0) {
+									// Select the first match and move cursor to end of it
+									var range = ranges[0];
+									if (range && range.Select) {
+										range.Select(true);
+										anchorFound = true;
+									}
+									// Move cursor to the end of the selected range
+									if (range && range.MoveCursorToPos) {
+										range.MoveCursorToPos(false); // false = move to end
+									}
+								}
 							}
-						}
-						
-						return { success: true, message: 'Endnote added with reference text', anchor_found: anchorFound, anchor_used: anchor || 'cursor position' };
-					}, false, false, function(result) {
-						console.log('add_endnote result:', result);
-						resolve(result || { success: true });
+							
+							// 1. Insert the endnote marker at cursor position
+							doc.AddEndnote();
+							
+							// 2. Get all first paragraphs of endnotes
+							var endnoteParas = doc.GetEndNotesFirstParagraphs();
+							
+							if (endnoteParas && endnoteParas.length > 0) {
+								// 3. Get the LAST one - it's the one we just added
+								var newestEndnote = endnoteParas[endnoteParas.length - 1];
+								
+								// 4. Add the reference text to this paragraph
+								if (newestEndnote && newestEndnote.AddText) {
+									newestEndnote.AddText(textToAdd);
+								}
+							}
+							
+							// CRITICAL: Move cursor back to main document body after adding endnote
+							// This ensures the next add_endnote call can search in the main document
+							if (logicDoc && logicDoc.SetDocPosType) {
+								logicDoc.SetDocPosType(0x00); // docpostype_Content
+								if (logicDoc.RemoveSelection) {
+									logicDoc.RemoveSelection();
+								}
+							}
+							
+							return { success: true, message: 'Endnote added with reference text', anchor_found: anchorFound, anchor_used: anchor || 'cursor position' };
+						}, false, false, function(result) {
+							console.log('add_endnote result:', result);
+							resolve(result || { success: true });
+						});
 					});
 				});
 			}
@@ -692,68 +813,71 @@
 				window.Asc.scope.footnoteText = String(referenceText);
 				window.Asc.scope.anchorText = String(anchorText);
 				
-				return new Promise(function(resolve) {
-					// isNoCalc=false ensures document recalculates footnote numbers
-					// isNoUndo=false creates undo point for each footnote
-					window.Asc.plugin.callCommand(function() {
-						var textToAdd = Asc.scope.footnoteText;
-						var anchor = Asc.scope.anchorText;
-						var doc = Api.GetDocument();
-						var logicDoc = doc.Document; // Get internal document for SetDocPosType
-						
-						// IMPORTANT: Ensure we're in the main document body before searching
-						// docpostype_Content = 0x00
-						if (logicDoc && logicDoc.SetDocPosType) {
-							logicDoc.SetDocPosType(0x00); // docpostype_Content
-						}
-						
-						// If anchor_text provided, find it and position cursor after it
-						var anchorFound = false;
-						if (anchor && anchor.length > 0) {
-							var ranges = doc.Search ? doc.Search(anchor, false) : [];
-							if (ranges && ranges.length > 0) {
-								// Select the first match and move cursor to end of it
-								var range = ranges[0];
-								if (range && range.Select) {
-									range.Select(true);
-									anchorFound = true;
-								}
-								// Move cursor to the end of the selected range
-								if (range && range.MoveCursorToPos) {
-									range.MoveCursorToPos(false); // false = move to end
-								}
-							}
-						}
-						
-						// 1. Insert the footnote marker at cursor position
-						doc.AddFootnote();
-						
-						// 2. Get all first paragraphs of footnotes
-						var footnoteParas = doc.GetFootnotesFirstParagraphs();
-						
-						if (footnoteParas && footnoteParas.length > 0) {
-							// 3. Get the LAST one - it's the one we just added
-							var newestFootnote = footnoteParas[footnoteParas.length - 1];
+				// Wrap edit with AI authorship
+				return ToolExecutor.executeWithAIAuthor(async function() {
+					return new Promise(function(resolve) {
+						// isNoCalc=false ensures document recalculates footnote numbers
+						// isNoUndo=false creates undo point for each footnote
+						window.Asc.plugin.callCommand(function() {
+							var textToAdd = Asc.scope.footnoteText;
+							var anchor = Asc.scope.anchorText;
+							var doc = Api.GetDocument();
+							var logicDoc = doc.Document; // Get internal document for SetDocPosType
 							
-							// 4. Add the reference text to this paragraph
-							if (newestFootnote && newestFootnote.AddText) {
-								newestFootnote.AddText(textToAdd);
+							// IMPORTANT: Ensure we're in the main document body before searching
+							// docpostype_Content = 0x00
+							if (logicDoc && logicDoc.SetDocPosType) {
+								logicDoc.SetDocPosType(0x00); // docpostype_Content
 							}
-						}
-						
-						// CRITICAL: Move cursor back to main document body after adding footnote
-						// This ensures the next add_footnote call can search in the main document
-						if (logicDoc && logicDoc.SetDocPosType) {
-							logicDoc.SetDocPosType(0x00); // docpostype_Content
-							if (logicDoc.RemoveSelection) {
-								logicDoc.RemoveSelection();
+							
+							// If anchor_text provided, find it and position cursor after it
+							var anchorFound = false;
+							if (anchor && anchor.length > 0) {
+								var ranges = doc.Search ? doc.Search(anchor, false) : [];
+								if (ranges && ranges.length > 0) {
+									// Select the first match and move cursor to end of it
+									var range = ranges[0];
+									if (range && range.Select) {
+										range.Select(true);
+										anchorFound = true;
+									}
+									// Move cursor to the end of the selected range
+									if (range && range.MoveCursorToPos) {
+										range.MoveCursorToPos(false); // false = move to end
+									}
+								}
 							}
-						}
-						
-						return { success: true, message: 'Footnote added with reference text', anchor_found: anchorFound, anchor_used: anchor || 'cursor position' };
-					}, false, false, function(result) {
-						console.log('add_footnote result:', result);
-						resolve(result || { success: true });
+							
+							// 1. Insert the footnote marker at cursor position
+							doc.AddFootnote();
+							
+							// 2. Get all first paragraphs of footnotes
+							var footnoteParas = doc.GetFootnotesFirstParagraphs();
+							
+							if (footnoteParas && footnoteParas.length > 0) {
+								// 3. Get the LAST one - it's the one we just added
+								var newestFootnote = footnoteParas[footnoteParas.length - 1];
+								
+								// 4. Add the reference text to this paragraph
+								if (newestFootnote && newestFootnote.AddText) {
+									newestFootnote.AddText(textToAdd);
+								}
+							}
+							
+							// CRITICAL: Move cursor back to main document body after adding footnote
+							// This ensures the next add_footnote call can search in the main document
+							if (logicDoc && logicDoc.SetDocPosType) {
+								logicDoc.SetDocPosType(0x00); // docpostype_Content
+								if (logicDoc.RemoveSelection) {
+									logicDoc.RemoveSelection();
+								}
+							}
+							
+							return { success: true, message: 'Footnote added with reference text', anchor_found: anchorFound, anchor_used: anchor || 'cursor position' };
+						}, false, false, function(result) {
+							console.log('add_footnote result:', result);
+							resolve(result || { success: true });
+						});
 					});
 				});
 			}
@@ -765,17 +889,20 @@
 				var text = params.text || '';
 				
 				if (window.Asc && window.Asc.plugin && window.Asc.plugin.executeMethod) {
-					return new Promise(function(resolve) {
-						// Use InputText which properly handles selection replacement
-						// When there's a selection, InputText replaces it with the new text
-						// If text is empty, this effectively deletes the selection
-						window.Asc.plugin.executeMethod('InputText', [text], function(result) {
-							console.log('InputText result:', result);
-							if (!text || text === '') {
-								resolve({ success: true, message: 'Selection deleted' });
-							} else {
-								resolve({ success: true, message: 'Selection replaced' });
-							}
+					// Wrap edit with AI authorship
+					return ToolExecutor.executeWithAIAuthor(async function() {
+						return new Promise(function(resolve) {
+							// Use InputText which properly handles selection replacement
+							// When there's a selection, InputText replaces it with the new text
+							// If text is empty, this effectively deletes the selection
+							window.Asc.plugin.executeMethod('InputText', [text], function(result) {
+								console.log('InputText result:', result);
+								if (!text || text === '') {
+									resolve({ success: true, message: 'Selection deleted' });
+								} else {
+									resolve({ success: true, message: 'Selection replaced' });
+								}
+							});
 						});
 					});
 				}
@@ -791,11 +918,14 @@
 			'delete_selection': async function() {
 				console.log('delete_selection called');
 				if (window.Asc && window.Asc.plugin && window.Asc.plugin.executeMethod) {
-					return new Promise(function(resolve) {
-						// InputText with empty string deletes the current selection
-						window.Asc.plugin.executeMethod('InputText', [''], function(result) {
-							console.log('delete_selection InputText result:', result);
-							resolve({ success: true, message: 'Selection deleted' });
+					// Wrap edit with AI authorship
+					return ToolExecutor.executeWithAIAuthor(async function() {
+						return new Promise(function(resolve) {
+							// InputText with empty string deletes the current selection
+							window.Asc.plugin.executeMethod('InputText', [''], function(result) {
+								console.log('delete_selection InputText result:', result);
+								resolve({ success: true, message: 'Selection deleted' });
+							});
 						});
 					});
 				}
@@ -1283,6 +1413,9 @@
 		// Code inline
 		html = html.replace(/`(.+?)`/g, '<code>$1</code>');
 		
+		// Numbered citations: [1], [2] -> clickable badges that scroll to source cards
+		html = html.replace(/\[(\d+)\]/g, '<span class="reg-citation-inline" onclick="scrollToSource($1)" title="View source $1">$1</span>');
+		
 		// Headers
 		html = html.replace(/^### (.+)$/gm, '<h3>$1</h3>');
 		html = html.replace(/^## (.+)$/gm, '<h2>$1</h2>');
@@ -1292,12 +1425,14 @@
 		html = html.replace(/^- (.+)$/gm, '<li>$1</li>');
 		html = html.replace(/^(\d+)\. (.+)$/gm, '<li>$2</li>');
 		
-		// Wrap consecutive <li> in <ul>
+		// Wrap consecutive <li> in <ul> and remove newlines between list items
 		html = html.replace(/(<li>.*<\/li>\n?)+/g, function(match) {
-			return '<ul>' + match + '</ul>';
+			// Remove newlines between list items to prevent <br> insertion
+			var cleanedMatch = match.replace(/\n/g, '');
+			return '<ul>' + cleanedMatch + '</ul>';
 		});
 		
-		// Line breaks
+		// Line breaks (only outside of lists now)
 		html = html.replace(/\n\n/g, '</p><p>');
 		html = html.replace(/\n/g, '<br>');
 		
@@ -1470,9 +1605,27 @@
 			
 			// Render metadata items (thinking, tool calls)
 			if (msg.metadata && msg.metadata.items) {
+				// Separate tool_calls from other items for grouping
+				var toolCalls = [];
+				var otherItems = [];
+				
 				msg.metadata.items.forEach(function(item) {
+					if (item.type === 'tool_call' || item.type === 'tool_result') {
+						toolCalls.push(item);
+					} else {
+						otherItems.push(item);
+					}
+				});
+				
+				// Render non-tool items first (thinking blocks, etc.)
+				otherItems.forEach(function(item) {
 					html += renderMetadataItem(item);
 				});
+				
+				// Render tool calls in a collapsible container
+				if (toolCalls.length > 0) {
+					html += renderToolsUsedContainer(toolCalls, true);
+				}
 			}
 			
 			// Render text content
@@ -1546,6 +1699,193 @@
 		}
 		
 		return html;
+	}
+
+	// Render the collapsible "Tools Used" container
+	function renderToolsUsedContainer(toolCalls, collapsed) {
+		if (!toolCalls || toolCalls.length === 0) return '';
+		
+		var hasRunning = toolCalls.some(function(t) { return t.status === 'running'; });
+		var expandedClass = collapsed ? '' : ' expanded';
+		var hasRunningAttr = hasRunning ? ' data-has-running="true"' : '';
+		
+		var html = '<div class="tools-used-container' + expandedClass + '"' + hasRunningAttr + '>';
+		
+		// Header bar
+		html += '<div class="tools-used-header" role="button" tabindex="0" aria-expanded="' + (!collapsed) + '">';
+		html += '<span class="tools-used-icon">';
+		html += '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">';
+		html += '<path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/>';
+		html += '</svg>';
+		html += '</span>';
+		html += '<span class="tools-used-label">Tools Used</span>';
+		html += '<span class="tools-used-count">' + toolCalls.length + '</span>';
+		
+		// Show spinner if any tool is running
+		if (hasRunning) {
+			html += '<span class="tools-used-status"><span class="spinner" aria-hidden="true"></span></span>';
+		}
+		
+		html += '<span class="tools-used-toggle" aria-hidden="true">›</span>';
+		html += '</div>';
+		
+		// List of tool calls (hidden by default)
+		html += '<div class="tools-used-list">';
+		toolCalls.forEach(function(item) {
+			html += renderMetadataItem(item);
+		});
+		html += '</div>';
+		
+		html += '</div>';
+		
+		return html;
+	}
+
+	// Get or create the tools-used container in a message during streaming
+	function getOrCreateToolsContainer(msgContainer) {
+		var container = msgContainer.querySelector('.tools-used-container');
+		if (!container) {
+			// Create container expanded during generation, will collapse on 'done'
+			var html = '<div class="tools-used-container expanded" data-generating="true">';
+			html += '<div class="tools-used-header" role="button" tabindex="0" aria-expanded="true">';
+			html += '<span class="tools-used-icon">';
+			html += '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">';
+			html += '<path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/>';
+			html += '</svg>';
+			html += '</span>';
+			html += '<span class="tools-used-label">Tools Used</span>';
+			html += '<span class="tools-used-count">0</span>';
+			html += '<span class="tools-used-status"><span class="spinner" aria-hidden="true"></span></span>';
+			html += '<span class="tools-used-toggle" aria-hidden="true">›</span>';
+			html += '</div>';
+			html += '<div class="tools-used-list"></div>';
+			html += '</div>';
+			msgContainer.insertAdjacentHTML('beforeend', html);
+			container = msgContainer.querySelector('.tools-used-container');
+		}
+		return container;
+	}
+
+	// Add a tool call to the tools container
+	function addToolToContainer(msgContainer, toolItem) {
+		var container = getOrCreateToolsContainer(msgContainer);
+		var list = container.querySelector('.tools-used-list');
+		var countEl = container.querySelector('.tools-used-count');
+		var statusEl = container.querySelector('.tools-used-status');
+		
+		// Add the tool to the list
+		list.insertAdjacentHTML('beforeend', renderMetadataItem(toolItem));
+		
+		// Get the newly added tool element
+		var toolCalls = list.querySelectorAll('.tool-call');
+		var newToolEl = toolCalls[toolCalls.length - 1];
+		
+		// Expand the tool during generation so context is visible
+		newToolEl.classList.add('expanded');
+		var toolHeader = newToolEl.querySelector('.tool-call-header');
+		if (toolHeader) {
+			toolHeader.setAttribute('aria-expanded', 'true');
+		}
+		
+		// Capture any intermediate content and associate it with this tool
+		captureIntermediateContent(msgContainer, newToolEl);
+		
+		// Update count
+		var toolCount = toolCalls.length;
+		countEl.textContent = toolCount;
+		
+		// Show spinner if this tool is running
+		if (toolItem.status === 'running') {
+			statusEl.innerHTML = '<span class="spinner" aria-hidden="true"></span>';
+			container.setAttribute('data-has-running', 'true');
+		}
+	}
+
+	// Update the tools container status (check for running tools)
+	function updateToolsContainerStatus(msgContainer) {
+		var container = msgContainer.querySelector('.tools-used-container');
+		if (!container) return;
+		
+		var runningTools = container.querySelectorAll('.tool-call[data-status="running"]');
+		var isGenerating = container.getAttribute('data-generating') === 'true';
+		var statusEl = container.querySelector('.tools-used-status');
+		
+		if (runningTools.length > 0) {
+			statusEl.innerHTML = '<span class="spinner" aria-hidden="true"></span>';
+			container.setAttribute('data-has-running', 'true');
+		} else if (isGenerating) {
+			// Keep spinner while agent is still generating response
+			statusEl.innerHTML = '<span class="spinner" aria-hidden="true"></span>';
+			container.removeAttribute('data-has-running');
+		} else {
+			statusEl.innerHTML = '';
+			container.removeAttribute('data-has-running');
+		}
+	}
+
+	// Finalize the tools container when generation is complete
+	function finalizeToolsContainer(msgContainer) {
+		var container = msgContainer.querySelector('.tools-used-container');
+		if (!container) return;
+		
+		// Remove generating state
+		container.removeAttribute('data-generating');
+		
+		// Collapse the tools-used container
+		container.classList.remove('expanded');
+		var containerHeader = container.querySelector('.tools-used-header');
+		if (containerHeader) {
+			containerHeader.setAttribute('aria-expanded', 'false');
+		}
+		
+		// Collapse all individual tool chips
+		var toolCalls = container.querySelectorAll('.tool-call');
+		toolCalls.forEach(function(toolCall) {
+			toolCall.classList.remove('expanded');
+			var toolHeader = toolCall.querySelector('.tool-call-header');
+			if (toolHeader) {
+				toolHeader.setAttribute('aria-expanded', 'false');
+			}
+		});
+		
+		// Update status (will remove spinner since no longer generating)
+		updateToolsContainerStatus(msgContainer);
+	}
+
+	// Capture intermediate content and associate it with a tool
+	function captureIntermediateContent(msgContainer, toolCallEl) {
+		var intermediateEl = msgContainer.querySelector('.intermediate-content');
+		if (!intermediateEl) return;
+		
+		var text = intermediateEl.getAttribute('data-raw') || '';
+		if (!text.trim()) {
+			// No content to capture, just remove the element
+			intermediateEl.remove();
+			return;
+		}
+		
+		// Store the context text in the tool's expandable section
+		var bodyEl = toolCallEl.querySelector('.tool-call-body');
+		if (bodyEl) {
+			var contextHtml = '<div class="tool-context-section">';
+			contextHtml += '<div class="tool-section-label">Context</div>';
+			contextHtml += '<div class="tool-context-text">' + parseMarkdown(text) + '</div>';
+			contextHtml += '</div>';
+			bodyEl.insertAdjacentHTML('afterbegin', contextHtml);
+		}
+		
+		// Clear and remove the intermediate content element
+		intermediateEl.remove();
+	}
+
+	// Get or create intermediate content element for displaying text during tool execution
+	function getOrCreateIntermediateContent(msgContainer) {
+		var el = msgContainer.querySelector('.intermediate-content');
+		if (!el) {
+			msgContainer.insertAdjacentHTML('beforeend', '<div class="intermediate-content streaming"></div>');
+			el = msgContainer.querySelector('.intermediate-content');
+		}
+		return el;
 	}
 
 	// Render regulatory search results with rich UI (Ritivel-style)
@@ -1661,6 +2001,113 @@
 		
 		return html;
 	}
+	
+	// Render sources section for agent response (displays source chips below the text)
+	function renderSourcesSection(sources) {
+		if (!sources || sources.length === 0) return '';
+		
+		var html = '<div class="agent-sources-section">';
+		
+		// Compact chips row - one chip per source
+		html += '<div class="agent-sources-chips">';
+		for (var i = 0; i < sources.length; i++) {
+			html += renderSourceChip(sources[i], i);
+		}
+		html += '</div>';
+		
+		// Expandable detail panel (hidden by default, shown when chip is clicked)
+		html += '<div class="agent-source-detail" id="agent-source-detail"></div>';
+		
+		html += '</div>';
+		
+		return html;
+	}
+	
+	// Render individual source chip (small oval pill)
+	function renderSourceChip(src, index) {
+		var sourceType = (src.source_type || 'doc').toLowerCase();
+		var title = src.title || src.code || 'Source ' + (index + 1);
+		// Truncate title for chip display
+		var shortTitle = title.length > 30 ? title.substring(0, 27) + '...' : title;
+		var uniqueId = 'source-chip-' + index;
+		
+		var html = '<button class="source-chip" data-source-index="' + index + '" id="' + uniqueId + '" onclick="toggleSourceDetail(' + index + ')" title="' + escapeHtml(title) + '">';
+		html += '<span class="source-chip-badge">[' + (index + 1) + ']</span>';
+		html += '<span class="source-chip-title">' + escapeHtml(shortTitle) + '</span>';
+		if (src.code && src.code !== title) {
+			html += '<span class="source-chip-code">' + escapeHtml(src.code) + '</span>';
+		}
+		html += '<span class="source-chip-type source-chip-type--' + sourceType + '">' + sourceType.toUpperCase() + '</span>';
+		html += '</button>';
+		
+		return html;
+	}
+	
+	// Store sources globally for detail panel access
+	var _currentSources = [];
+	
+	// Toggle source detail panel
+	window.toggleSourceDetail = function(index) {
+		var detailPanel = document.getElementById('agent-source-detail');
+		var chips = document.querySelectorAll('.source-chip');
+		
+		if (!detailPanel || !_currentSources[index]) return;
+		
+		var src = _currentSources[index];
+		var isAlreadyShowing = detailPanel.getAttribute('data-showing-index') === String(index);
+		
+		// Remove active state from all chips
+		chips.forEach(function(chip) {
+			chip.classList.remove('source-chip--active');
+		});
+		
+		if (isAlreadyShowing) {
+			// Hide panel
+			detailPanel.innerHTML = '';
+			detailPanel.classList.remove('visible');
+			detailPanel.removeAttribute('data-showing-index');
+		} else {
+			// Show panel with source details
+			var chip = document.querySelector('.source-chip[data-source-index="' + index + '"]');
+			if (chip) chip.classList.add('source-chip--active');
+			
+			var sourceType = (src.source_type || 'doc').toLowerCase();
+			var html = '<div class="source-detail-content">';
+			html += '<div class="source-detail-header">';
+			html += '<span class="source-detail-badge">[' + (index + 1) + ']</span>';
+			html += '<span class="source-detail-title">' + escapeHtml(src.title || 'Source ' + (index + 1)) + '</span>';
+			if (src.code) {
+				html += '<span class="source-detail-code">' + escapeHtml(src.code) + '</span>';
+			}
+			html += '<span class="source-detail-type source-chip-type--' + sourceType + '">' + sourceType.toUpperCase() + '</span>';
+			html += '<button class="source-detail-close" onclick="toggleSourceDetail(' + index + ')">&times;</button>';
+			html += '</div>';
+			
+			if (src.header_path) {
+				html += '<div class="source-detail-path">' + escapeHtml(src.header_path) + '</div>';
+			}
+			
+			html += '<div class="source-detail-text">';
+			html += '<p>' + escapeHtml(src.snippet || src.full_text || src.context || 'No content available.') + '</p>';
+			html += '</div>';
+			
+			if (src.url) {
+				html += '<a href="' + escapeHtml(src.url) + '" target="_blank" rel="noopener noreferrer" class="source-detail-link">';
+				html += 'View Original';
+				html += '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>';
+				html += '</a>';
+			}
+			
+			html += '</div>';
+			
+			detailPanel.innerHTML = html;
+			detailPanel.classList.add('visible');
+			detailPanel.setAttribute('data-showing-index', index);
+			
+			// Scroll detail into view
+			detailPanel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+		}
+	};
 	
 	// Render individual source card (Ritivel-style expandable)
 	function renderSourceCard(src, index) {
@@ -1797,6 +2244,225 @@
 		if (!text || text.length <= maxLen) return text;
 		return text.substring(0, maxLen).trim() + '...';
 	}
+
+	// ============================================
+	// PROGRESS CARDS RENDERING
+	// ============================================
+	
+	// Initialize progress tracking for a new message
+	function initProgressTracking(msgContainer) {
+		var containerId = 'progress-' + Date.now();
+		state.progressContainerId = containerId;
+		state.currentStage = 'understanding';
+		state.completedStages = [];
+		
+		// Insert progress cards container at the start of message
+		var progressHtml = renderProgressCards(containerId);
+		msgContainer.insertAdjacentHTML('afterbegin', progressHtml);
+		
+		// Start with understanding stage active
+		updateProgressStage('understanding');
+	}
+	
+	// Render the progress cards HTML
+	function renderProgressCards(containerId) {
+		var html = '<div class="agent-progress-container" id="' + containerId + '">';
+		html += '<div class="agent-progress-header">';
+		html += '<span class="agent-progress-title">Processing your request</span>';
+		html += '<button class="agent-progress-toggle" onclick="toggleProgressCards(\'' + containerId + '\')" title="Collapse">';
+		html += '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="18 15 12 9 6 15"/></svg>';
+		html += '</button>';
+		html += '</div>';
+		html += '<div class="agent-progress-cards">';
+		
+		for (var i = 0; i < AGENT_STAGES.length; i++) {
+			var stage = AGENT_STAGES[i];
+			var statusClass = i === 0 ? 'active' : 'pending';
+			
+			html += '<div class="progress-card" data-stage="' + stage.id + '" data-status="' + statusClass + '">';
+			html += '<div class="progress-card-icon">' + stage.icon + '</div>';
+			html += '<div class="progress-card-content">';
+			html += '<h4 class="progress-card-label">' + stage.label + '</h4>';
+			html += '<p class="progress-card-description">' + stage.description + '</p>';
+			html += '</div>';
+			html += '<div class="progress-card-status">';
+			html += '<div class="progress-spinner"></div>';
+			html += '<svg class="progress-check" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>';
+			html += '</div>';
+			html += '</div>';
+		}
+		
+		html += '</div></div>';
+		return html;
+	}
+	
+	// Update progress to a specific stage
+	function updateProgressStage(stageId) {
+		if (!state.progressContainerId) return;
+		
+		var container = document.getElementById(state.progressContainerId);
+		if (!container) return;
+		
+		var stageIndex = -1;
+		for (var i = 0; i < AGENT_STAGES.length; i++) {
+			if (AGENT_STAGES[i].id === stageId) {
+				stageIndex = i;
+				break;
+			}
+		}
+		
+		if (stageIndex === -1) return;
+		
+		// Mark all previous stages as complete
+		for (var j = 0; j < stageIndex; j++) {
+			var prevStageId = AGENT_STAGES[j].id;
+			if (state.completedStages.indexOf(prevStageId) === -1) {
+				state.completedStages.push(prevStageId);
+			}
+			var prevCard = container.querySelector('[data-stage="' + prevStageId + '"]');
+			if (prevCard) {
+				prevCard.setAttribute('data-status', 'complete');
+			}
+		}
+		
+		// Set current stage as active
+		state.currentStage = stageId;
+		var currentCard = container.querySelector('[data-stage="' + stageId + '"]');
+		if (currentCard) {
+			currentCard.setAttribute('data-status', 'active');
+		}
+		
+		// Reset all FUTURE stages back to pending (important for when stages go backwards)
+		for (var k = stageIndex + 1; k < AGENT_STAGES.length; k++) {
+			var futureStageId = AGENT_STAGES[k].id;
+			// Remove from completed stages if it was there
+			var completedIndex = state.completedStages.indexOf(futureStageId);
+			if (completedIndex !== -1) {
+				state.completedStages.splice(completedIndex, 1);
+			}
+			var futureCard = container.querySelector('[data-stage="' + futureStageId + '"]');
+			if (futureCard) {
+				futureCard.setAttribute('data-status', 'pending');
+			}
+		}
+		
+		// Update header text based on stage
+		var headerTitle = container.querySelector('.agent-progress-title');
+		if (headerTitle) {
+			var stageLabels = {
+				'understanding': 'Understanding your query...',
+				'searching': 'Searching knowledge base...',
+				'sources': 'Processing sources...',
+				'synthesizing': 'Generating response...',
+				'complete': 'Response complete'
+			};
+			headerTitle.textContent = stageLabels[stageId] || 'Processing...';
+		}
+	}
+	
+	// Complete all progress stages
+	function completeProgressStages() {
+		updateProgressStage('complete');
+		
+		if (!state.progressContainerId) return;
+		
+		var container = document.getElementById(state.progressContainerId);
+		if (!container) return;
+		
+		// Mark the complete stage as complete too
+		var completeCard = container.querySelector('[data-stage="complete"]');
+		if (completeCard) {
+			completeCard.setAttribute('data-status', 'complete');
+		}
+		
+		// Add completed class to container for styling
+		container.classList.add('completed');
+		
+		// Auto-collapse after a short delay
+		setTimeout(function() {
+			if (container && !container.classList.contains('manually-expanded')) {
+				container.classList.add('collapsed');
+			}
+		}, 2000);
+	}
+	
+	// Reset progress tracking
+	function resetProgressTracking() {
+		state.currentStage = null;
+		state.completedStages = [];
+		state.progressContainerId = null;
+	}
+	
+	// Global function to toggle progress cards visibility
+	window.toggleProgressCards = function(containerId) {
+		var container = document.getElementById(containerId);
+		if (container) {
+			container.classList.toggle('collapsed');
+			container.classList.toggle('manually-expanded');
+		}
+	};
+
+	// Update stage based on SSE event type and data
+	function updateStageFromSSEEvent(eventType, data) {
+		switch (eventType) {
+			case 'tool_call':
+				if (data.name === 'regulatory_search' || data.name === 'search_reference_documents') {
+					if (data.status === 'running') {
+						updateProgressStage('searching');
+					} else if (data.status === 'success') {
+						// Check if we have sources
+						if (data.result && data.result.sources && data.result.sources.length > 0) {
+							updateProgressStage('sources');
+						} else {
+							updateProgressStage('synthesizing');
+						}
+					}
+				}
+				break;
+				
+			case 'tool_result_request':
+				// A frontend tool is being requested
+				updateProgressStage('searching');
+				break;
+				
+			case 'content':
+				// Content is streaming - we're in synthesizing phase
+				if (state.currentStage !== 'synthesizing' && state.currentStage !== 'complete') {
+					updateProgressStage('synthesizing');
+				}
+				break;
+				
+			case 'sources':
+				// Direct sources event
+				updateProgressStage('sources');
+				break;
+				
+			case 'step':
+				// Step events from regulatory search API
+				if (data.step === 'analyze' && data.status === 'active') {
+					updateProgressStage('understanding');
+				} else if (data.step === 'search' && data.status === 'active') {
+					updateProgressStage('searching');
+				} else if (data.step === 'synthesize' && data.status === 'active') {
+					updateProgressStage('synthesizing');
+				}
+				break;
+				
+			case 'done':
+				completeProgressStages();
+				break;
+				
+			case 'error':
+				// On error, mark current stage as error (could add error styling)
+				if (state.progressContainerId) {
+					var container = document.getElementById(state.progressContainerId);
+					if (container) {
+						container.classList.add('has-error');
+					}
+				}
+				break;
+		}
+	}
 	
 	// Global function to toggle source card expansion
 	window.toggleSourceCard = function(sourceId) {
@@ -1807,14 +2473,33 @@
 		}
 	};
 	
-	// Global function to scroll to source
+	// Global function to scroll to source - works with both chip UI and card UI
 	window.scrollToSource = function(sourceNum) {
+		var index = sourceNum - 1; // Convert to 0-based index
+		
+		// First, try the new chip UI
+		var chip = document.querySelector('.source-chip[data-source-index="' + index + '"]');
+		if (chip) {
+			// Scroll to chip
+			chip.scrollIntoView({ behavior: 'smooth', block: 'center' });
+			// Highlight chip briefly
+			chip.classList.add('source-chip--highlight');
+			setTimeout(function() {
+				chip.classList.remove('source-chip--highlight');
+			}, 1500);
+			// Expand the detail panel
+			if (typeof toggleSourceDetail === 'function') {
+				toggleSourceDetail(index);
+			}
+			return;
+		}
+		
+		// Fallback to old card UI
 		var cards = document.querySelectorAll('.reg-source-card');
-		var targetCard = cards[sourceNum - 1];
+		var targetCard = cards[index];
 		if (targetCard) {
 			targetCard.scrollIntoView({ behavior: 'smooth', block: 'center' });
 			targetCard.setAttribute('data-expanded', 'true');
-			// Brief highlight
 			targetCard.classList.add('reg-source-highlight');
 			setTimeout(function() {
 				targetCard.classList.remove('reg-source-highlight');
@@ -1915,6 +2600,9 @@
 	async function generateBackendResponse(userText) {
 		setGenerating(true);
 		
+		// Reset sources for this new message
+		state.currentMessageSources = [];
+		
 		// Create abort controller for cancellation
 		state.abortController = new AbortController();
 		
@@ -1935,6 +2623,9 @@
 			// Create assistant message container
 			appendMessageElement('<div class="message assistant"></div>');
 			var msgContainer = elements.messages.querySelector('.message.assistant:last-child');
+			
+			// Initialize progress tracking for this message
+			initProgressTracking(msgContainer);
 			
 			// Track response data for saving
 			var items = [];
@@ -1998,6 +2689,10 @@
 			}
 			
 		} catch (error) {
+			// Finalize tools container on error/abort
+			if (msgContainer) {
+				finalizeToolsContainer(msgContainer);
+			}
 			if (error.name === 'AbortError') {
 				console.log('Request aborted');
 			} else {
@@ -2008,10 +2703,15 @@
 		} finally {
 			setGenerating(false);
 			state.abortController = null;
+			// Reset progress tracking for next message
+			resetProgressTracking();
 		}
 	}
 
 	async function handleSSEEvent(eventType, data, msgContainer, items, onContent) {
+		// Update progress stage based on event
+		updateStageFromSSEEvent(eventType, data);
+		
 		switch (eventType) {
 			case 'thinking':
 				var thinkingItem = { type: 'thinking', content: data.content };
@@ -2030,7 +2730,7 @@
 					status: 'running' 
 				};
 				items.push(toolItem);
-				msgContainer.insertAdjacentHTML('beforeend', renderMetadataItem(toolItem));
+				addToolToContainer(msgContainer, toolItem);
 				scrollToBottom();
 				
 				// Execute the tool locally
@@ -2077,46 +2777,91 @@
 				result: data.result
 			};
 			
-			// Check if we already have this tool call (by ID first, then by running status)
-			// Note: We check regardless of status because the frontend may have already
-			// updated the tool call to 'success' before the backend sends the final event
-			var existingToolCall = data.id ? msgContainer.querySelector('.tool-call[data-tool-call-id="' + data.id + '"]') : null;
-			if (!existingToolCall) {
-				// Fallback: look for a running tool call (for backwards compatibility)
-				existingToolCall = msgContainer.querySelector('.tool-call[data-status="running"]');
+			// For search tools, skip rendering the tool indicator - sources will be shown as chips at the end
+			var isSearchTool = (data.name === 'regulatory_search' || data.name === 'search_reference_documents');
+			
+			if (!isSearchTool) {
+				// Check if we already have this tool call (by ID first, then by running status)
+				// Note: We check regardless of status because the frontend may have already
+				// updated the tool call to 'success' before the backend sends the final event
+				var existingToolCall = data.id ? msgContainer.querySelector('.tool-call[data-tool-call-id="' + data.id + '"]') : null;
+				if (!existingToolCall) {
+					// Fallback: look for a running tool call (for backwards compatibility)
+					existingToolCall = msgContainer.querySelector('.tool-call[data-status="running"]');
+				}
+				if (existingToolCall) {
+					// Update existing only if still running
+					if (existingToolCall.getAttribute('data-status') === 'running') {
+						updateToolCallResult(msgContainer, data.id, data.name, { 
+							success: data.status === 'success', 
+							result: data.result 
+						});
+					}
+					// If already completed, skip (avoid duplicate updates)
+				} else {
+					items.push(displayToolItem);
+					addToolToContainer(msgContainer, displayToolItem);
+				}
 			}
-			if (existingToolCall) {
-				// Update existing only if still running
-				if (existingToolCall.getAttribute('data-status') === 'running') {
-					updateToolCallResult(msgContainer, data.id, data.name, { 
-						success: data.status === 'success', 
-						result: data.result 
+			
+			// Collect sources from search tools for numbered citations
+			if (data.status === 'success' && data.result) {
+				var toolSources = [];
+				if (data.name === 'regulatory_search' && data.result.sources) {
+					console.log('[Copilot] Collecting sources from regulatory_search:', data.result.sources.length, 'sources, start_index:', data.result.source_start_index);
+					toolSources = data.result.sources.map(function(s) {
+						return {
+							title: s.title,
+							code: s.code,
+							snippet: s.snippet,
+							full_text: s.full_text,
+							source_type: s.source_type || 'regulatory',
+							url: s.url,
+							page_numbers: s.page_numbers,
+							header_path: s.header_path
+						};
+					});
+				} else if (data.name === 'search_reference_documents' && data.result.results) {
+					console.log('[Copilot] Collecting sources from search_reference_documents:', data.result.results.length, 'sources, start_index:', data.result.source_start_index);
+					toolSources = data.result.results.map(function(r) {
+						return {
+							title: r.source,
+							snippet: r.text,
+							full_text: r.text,
+							context: r.context,
+							source_type: 'reference',
+							relevance_score: r.relevance_score
+						};
 					});
 				}
-				// If already completed, skip (avoid duplicate updates)
-			} else {
-				items.push(displayToolItem);
-				msgContainer.insertAdjacentHTML('beforeend', renderMetadataItem(displayToolItem));
+				// Append to current message sources (maintaining order for citation numbers)
+				if (toolSources.length > 0) {
+					state.currentMessageSources = state.currentMessageSources.concat(toolSources);
+					console.log('[Copilot] Total sources collected so far:', state.currentMessageSources.length);
+				}
 			}
+			
 			scrollToBottom();
 			break;
 			
 			case 'content':
 				// Streaming text content
-				var contentEl = msgContainer.querySelector('.message-content');
-				if (!contentEl) {
-					msgContainer.insertAdjacentHTML('beforeend', '<div class="message-content streaming"></div>');
-					contentEl = msgContainer.querySelector('.message-content');
+				if (data.delta) {
+					onContent(data.delta);
+					
+					// During generation, ALL content goes to intermediate-content
+					// It will be captured when tools start, or converted to message-content on 'done'
+					var intermediateEl = getOrCreateIntermediateContent(msgContainer);
+					var currentText = intermediateEl.getAttribute('data-raw') || '';
+					currentText += data.delta;
+					intermediateEl.setAttribute('data-raw', currentText);
+					intermediateEl.innerHTML = parseMarkdown(currentText);
+					
+					scrollToBottom();
+					
+					// Yield to browser to allow repaint (enables visible streaming)
+					await new Promise(function(resolve) { requestAnimationFrame(resolve); });
 				}
-				
-				onContent(data.delta);
-				
-				// Get current text and append delta
-				var currentText = contentEl.getAttribute('data-raw') || '';
-				currentText += data.delta;
-				contentEl.setAttribute('data-raw', currentText);
-				contentEl.innerHTML = parseMarkdown(currentText);
-				scrollToBottom();
 				break;
 			
 			case 'checkpoint':
@@ -2134,14 +2879,37 @@
 				break;
 			
 			case 'done':
-				// Remove streaming class
+				// Convert intermediate-content to message-content (the final answer)
+				var intermediateEl = msgContainer.querySelector('.intermediate-content');
+				if (intermediateEl) {
+					// This is the final answer - convert to message-content
+					intermediateEl.classList.remove('intermediate-content', 'streaming');
+					intermediateEl.classList.add('message-content');
+				}
+				
+				// Remove streaming class from any remaining elements
 				var streamingEl = msgContainer.querySelector('.streaming');
 				if (streamingEl) {
 					streamingEl.classList.remove('streaming');
 				}
-				break;
-		}
+				
+				// Finalize tools container (stop spinner)
+				finalizeToolsContainer(msgContainer);
+				
+				// Render source chips if we collected any from tool calls
+				console.log('[Copilot] Done event - collected sources:', state.currentMessageSources.length);
+				if (state.currentMessageSources.length > 0) {
+					console.log('[Copilot] Rendering sources section with', state.currentMessageSources.length, 'sources');
+					// Store sources globally for detail panel access
+					_currentSources = state.currentMessageSources.slice();
+					var sourcesHtml = renderSourcesSection(state.currentMessageSources);
+					msgContainer.insertAdjacentHTML('beforeend', sourcesHtml);
+				// Reset for next message
+				state.currentMessageSources = [];
+			}
+			break;
 	}
+}
 
 	function updateToolCallResult(msgContainer, toolCallId, toolName, result) {
 		var byId = null;
@@ -2186,6 +2954,12 @@
 					'<div class="tool-result-section"><div class="tool-section-label">Result</div>' +
 					'<pre class="tool-json">' + escapeHtml(resultStr) + '</pre></div>'
 				);
+		}
+		
+		// Update tools container status (remove spinner if no more running tools)
+		var msgContainer = toolCallEl.closest('.message');
+		if (msgContainer) {
+			updateToolsContainerStatus(msgContainer);
 		}
 	}
 
@@ -2261,7 +3035,7 @@
 			} else if (item.type === 'tool_call') {
 				var toolItem = { type: 'tool_call', id: item.id, name: item.name, params: item.params, status: 'running' };
 				items.push(toolItem);
-				msgContainer.insertAdjacentHTML('beforeend', renderMetadataItem(toolItem));
+				addToolToContainer(msgContainer, toolItem);
 				scrollToBottom();
 				await sleep(1000);
 			} else if (item.type === 'tool_result') {
@@ -2283,6 +3057,9 @@
 						'<div class="tool-result-section"><div class="tool-section-label">Result</div>' +
 						'<pre class="tool-json">' + escapeHtml(typeof item.result === 'string' ? item.result : formatJsonTruncated(item.result, 8000)) + '</pre></div>'
 					);
+					
+					// Update tools container status
+					updateToolsContainerStatus(msgContainer);
 				}
 				
 				// Update stored item
@@ -2321,6 +3098,9 @@
 			}
 		}
 		
+		// Finalize tools container (stop spinner)
+		finalizeToolsContainer(msgContainer);
+		
 		// Save message
 		addMessage('assistant', textContent, { items: items });
 	}
@@ -2346,6 +3126,15 @@
 		
 		setGenerating(false);
 		
+		// Finalize any active tools containers (stop spinners)
+		var generatingContainers = elements.messages.querySelectorAll('.tools-used-container[data-generating="true"]');
+		generatingContainers.forEach(function(container) {
+			var msgContainer = container.closest('.message');
+			if (msgContainer) {
+				finalizeToolsContainer(msgContainer);
+			}
+		});
+		
 		// Remove streaming class from any streaming content
 		var streamingEls = elements.messages.querySelectorAll('.streaming');
 		streamingEls.forEach(function(el) {
@@ -2368,7 +3157,7 @@
 		elements.askModeBtn.classList.toggle('active', mode === 'ask');
 		elements.agentModeBtn.classList.toggle('active', mode === 'agent');
 		
-		elements.modeIndicator.textContent = mode === 'ask' ? 'Ask mode' : 'Agent mode';
+		elements.modeIndicator.textContent = mode === 'ask' ? 'Ask mode' : 'Edit mode';
 		elements.chatInput.placeholder = mode === 'ask' 
 			? 'Ask anything about your document...' 
 			: 'Tell me what to do with the document...';
@@ -2480,6 +3269,17 @@
 				// Keep aria state in sync for keyboard/screen readers
 				var expanded = card.classList.contains('expanded');
 				toolHeader.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+			}
+			
+			// Tools Used container toggle
+			var toolsUsedHeader = e.target.closest('.tools-used-header');
+			if (toolsUsedHeader) {
+				var container = toolsUsedHeader.closest('.tools-used-container');
+				container.classList.toggle('expanded');
+
+				// Keep aria state in sync
+				var expanded = container.classList.contains('expanded');
+				toolsUsedHeader.setAttribute('aria-expanded', expanded ? 'true' : 'false');
 			}
 		});
 	}

@@ -56,7 +56,7 @@
 				// In production, the API is on the same server
 				// In development, we might need to adjust
 				if (editorUrl.includes('localhost') || editorUrl.includes('127.0.0.1')) {
-					baseUrl = 'http://localhost:8000';
+					baseUrl = 'http://localhost:8001';
 				} else {
 					// Use the same origin for API calls (works for ngrok)
 					baseUrl = editorUrl;

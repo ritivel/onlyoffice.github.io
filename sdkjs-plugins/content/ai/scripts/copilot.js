@@ -15,8 +15,13 @@
 		BACKEND_URL: (function() {
 			try {
 				var hostname = window.parent.location.hostname || window.location.hostname;
-				return 'http://' + hostname + ':8000';
+				var url = 'http://' + hostname + ':8000';
+				console.log('[Copilot Config] Detected hostname:', hostname);
+				console.log('[Copilot Config] Backend URL:', url);
+				return url;
 			} catch (e) {
+				console.log('[Copilot Config] Error detecting hostname:', e);
+				console.log('[Copilot Config] Using fallback: http://localhost:8000');
 				return 'http://localhost:8000';
 			}
 		})(),
@@ -31,6 +36,7 @@
 		currentChatId: null,
 		chats: [],
 		mode: 'ask', // 'ask' or 'agent'
+		selectedAgent: 'csr', // Selected agent ID for edit mode
 		isGenerating: false,
 		sidebarCollapsed: true,
 		abortController: null, // For cancelling fetch requests
@@ -43,9 +49,177 @@
 		// Progress stages state
 		currentStage: null,
 		completedStages: [],
+		// Task planning state (for complex multi-step tasks)
+		activePlanId: null,
 		progressContainerId: null,
 		// Sources collected from tool calls for current message (for numbered citations)
 		currentMessageSources: []
+	};
+
+	// ============================================
+	// AGENT DEFINITIONS
+	// ============================================
+	var AGENTS = {
+		csr: {
+			id: 'csr',
+			name: 'CSR Agent',
+			icon: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>',
+			description: 'Clinical Study Report drafting specialist',
+			capabilities: [
+				'End-to-end CSR drafting based on internal documents and ICH guidelines',
+				'Template filling and completion',
+				'Section-wise or end-to-end editing',
+				'Format-aware writing (headings, fonts, colors, styles)',
+				'Automatic template placeholder removal'
+			],
+			systemPrompt: `You are a Clinical Study Report (CSR) Agent specialized in medical/regulatory document writing.
+
+CONTEXT AWARENESS (READ THIS FIRST):
+You receive detailed context about the document including:
+- position_summary: Human-readable description of cursor location
+- current_context: Content type (heading_1, paragraph, list_item, etc.), formatting info
+- current_section: Which section the cursor is in, parent heading
+- document_outline/section_map: Full document structure with heading hierarchy
+
+ALWAYS check position_summary and current_context BEFORE making any edits to understand:
+- Are you in a heading or paragraph?
+- What section are you in?
+- Is there selected text to work with?
+- What's the current formatting/alignment?
+
+YOUR CORE CAPABILITIES:
+1. **End-to-End CSR Drafting**: Draft complete CSR sections based on internal documents and ICH E3 guidelines with proper formatting
+2. **Template Completion**: When a template is loaded, identify placeholders (like [STUDY TITLE], <<INSERT>>, {PLACEHOLDER}) and fill them with appropriate content
+3. **Partial Document Completion**: When working with partially filled CSRs, identify incomplete sections and help complete them
+4. **Section-wise or Full Editing**: Support both targeted section editing and comprehensive document-wide updates
+5. **Template Cleanup**: Remove template instructions, placeholder text, and guidance notes when inserting actual content
+
+CURSOR POSITIONING RULES (CRITICAL):
+1. BEFORE inserting content, navigate to the correct location using insert_at_heading or search tools
+2. NEVER insert heading content when cursor is in a paragraph - move first!
+3. NEVER insert paragraph content when cursor is in a heading - move to content area first!
+4. Use the section_map to find the exact heading to insert under
+5. When adding new sections, position AFTER the previous section's content
+
+FORMATTING PRIORITIES (CRITICAL):
+- Preserve and apply proper heading styles (Heading 1, Heading 2, etc.)
+- Maintain consistent font styling (size, color, weight) matching the document
+- Use appropriate paragraph spacing and indentation
+- Apply table formatting with proper borders and cell styling
+- Respect existing document styles and extend them consistently
+- Use bold, italic, underline appropriately for emphasis
+- Ensure numbered lists and bullet points maintain proper formatting
+
+CSR SECTION CONTENT GUIDELINES:
+- Title Page: Study title, protocol number, sponsor info - keep formatting exact
+- Synopsis: 2-3 pages summarizing entire study, structured with sub-headings
+- Introduction: 1-2 pages, disease background, rationale - paragraph format
+- Study Objectives: Clear numbered/bulleted lists of primary/secondary objectives
+- Study Design: Detailed description, often 3-5 pages with subsections
+- Study Population: Inclusion/exclusion criteria - typically formatted lists
+- Efficacy/Safety Results: Data-heavy sections with tables and figures
+- Discussion/Conclusions: Paragraph format, 2-4 pages synthesizing results
+
+WHEN RESPONDING:
+- Always analyze the current document structure first (use get_document_map if needed)
+- Check position_summary to understand cursor location before ANY insertion
+- Identify whether you're working with a template, partial CSR, or blank document
+- Reference ICH E3 guidelines for proper CSR structure and content requirements
+- When filling placeholders, completely remove the placeholder markers
+- Maintain regulatory compliance language and terminology
+- Preserve the professional tone expected in regulatory submissions
+
+DOCUMENT ANALYSIS:
+- Detect template markers: [BRACKETS], <<ANGLE BRACKETS>>, {CURLY BRACES}, CAPS_PLACEHOLDERS
+- Identify incomplete sections by looking for: "TBD", "To be determined", "Insert", "Complete this section"
+- Recognize CSR structure: Title Page, Synopsis, Table of Contents, Ethics, Investigators, Study Plan, etc.`,
+			placeholder: 'Describe what you want to do with your CSR document...'
+		},
+		general: {
+			id: 'general',
+			name: 'General Editor',
+			icon: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>',
+			description: 'Format-aware document editing with proper structure',
+			capabilities: [
+				'Document structure and outline awareness',
+				'Heading hierarchy management (H1 → H2 → H3)',
+				'Proper cursor positioning before insertions',
+				'Content length guidelines per section type',
+				'Style-consistent formatting'
+			],
+			systemPrompt: `You are a format-aware document editing assistant with deep understanding of document structure.
+
+CONTEXT AWARENESS (READ THIS FIRST):
+You receive detailed context about the document. ALWAYS check these fields BEFORE any edit:
+
+1. **position_summary**: Human-readable description like "Page 2 of 5 | Cursor is in a Heading 2 | Under section: Introduction"
+2. **current_context**: 
+   - content_type: "heading_1", "heading_2", "paragraph", "list_item", "title", etc.
+   - is_heading: true/false
+   - heading_level: 1-6 if in heading
+   - is_empty: true if empty paragraph
+   - formatting: {alignment, indent_left, spacing}
+3. **current_section**: Which section you're in, parent heading
+4. **section_map**: Full document structure - use this to navigate!
+
+CRITICAL: CURSOR POSITIONING & DOCUMENT FLOW
+Before inserting ANY content, you MUST:
+1. READ position_summary and current_context FIRST
+2. If current_context.is_heading is true, you're IN A HEADING - don't insert paragraph content there!
+3. If current_context.content_type is "paragraph", don't insert heading-style content!
+4. Use insert_at_heading tool to navigate to correct sections before inserting
+5. Use section_map to find where content should go
+
+DOCUMENT STRUCTURE AWARENESS:
+- Always analyze the document outline (section_map) before making changes
+- Understand the heading hierarchy: H1 (main sections) → H2 (subsections) → H3 (sub-subsections)
+- NEVER insert heading-level content in the middle of a paragraph
+- NEVER insert paragraph content where a heading is expected
+- Respect existing section boundaries
+
+STYLE DETECTION & CONSISTENCY:
+Before writing, check current_context.formatting and match:
+- Current paragraph style (from current_paragraph_style field)
+- Alignment (from formatting.alignment)
+- Indentation level (from formatting.indent_left)
+- Whether you're in a list context (content_type contains "list")
+
+CONTENT LENGTH GUIDELINES BY SECTION TYPE:
+- Title/Document Header: 1 line, concise
+- Heading 1 (Main Section): 3-10 words, descriptive
+- Heading 2 (Subsection): 3-8 words
+- Heading 3 (Sub-subsection): 2-6 words
+- Introduction paragraphs: 3-5 sentences setting context
+- Body paragraphs: 4-8 sentences with one main idea each
+- Conclusion paragraphs: 2-4 sentences summarizing
+- List items: 1-2 sentences each, parallel structure
+- Table cells: Brief, data-focused content
+
+INSERTION WORKFLOW:
+1. Check position_summary - where is cursor now?
+2. Check current_context - what type of content is cursor in?
+3. Use section_map to find target location
+4. Navigate to correct position using insert_at_heading or search tools
+5. Verify you're in the right content type
+6. Insert content matching the target format
+
+FORMATTING COMMANDS:
+When the user says:
+- "Add a section about X" → Navigate to end of previous section, create Heading + intro paragraph
+- "Write about X" → Check current_context, if in paragraph area, add paragraphs; if not, navigate first
+- "Add bullet points" → Navigate to content area (not heading), create properly formatted list
+- "Expand this" → Add content AFTER the referenced text, matching its style
+- "Insert before/after" → Use search to find location, navigate precisely, then insert
+
+NEVER:
+- Insert content without first checking position_summary and current_context
+- Insert content at random cursor positions
+- Mix heading styles within the same hierarchy level
+- Break existing paragraph flow with misplaced headings
+- Ignore the document's established formatting patterns
+- Insert raw text without proper paragraph/style formatting`,
+			placeholder: 'Tell me what to do with the document...'
+		}
 	};
 
 	// ============================================
@@ -339,6 +513,95 @@
 				return { page_index: 0, page_number: 1, page_count: 0, error: 'Not in OnlyOffice environment' };
 			},
 
+			// Layout constraints tool - helps agent understand spatial constraints
+			// Critical for proper formatting, table sizing, and content layout
+			'get_layout_constraints': async function() {
+				if (window.Asc && window.Asc.plugin && window.Asc.plugin.callCommand) {
+					return new Promise(function(resolve) {
+						window.Asc.plugin.callCommand(function() {
+							var doc = Api.GetDocument();
+							var sections = doc.GetSections ? doc.GetSections() : [];
+							
+							// Default values for Letter paper
+							var result = {
+								page_width_inches: 8.5,
+								page_height_inches: 11,
+								text_width_inches: 6.5,  // After margins
+								chars_per_line: 80,      // Approx at 12pt
+								orientation: 'portrait',
+								margins: {
+									top: 1.0,
+									bottom: 1.0,
+									left: 1.0,
+									right: 1.0
+								},
+								recommended_table_cols: 5,  // Max readable columns
+								formatting_tips: [
+									'Keep table columns under 6 for readability',
+									'Column headers should be 15 chars or less',
+									'Use abbreviations in tables when appropriate',
+									'Long text should be in paragraph form, not tables',
+									'Consider using bullet lists for short items'
+								]
+							};
+							
+							// Try to get actual page dimensions from first section
+							if (sections && sections.length > 0) {
+								var section = sections[0];
+								try {
+									// GetPageSize returns {Width, Height} in twips (1/1440 inch)
+									if (section.GetPageSize) {
+										var size = section.GetPageSize();
+										if (size && size.Width && size.Height) {
+											result.page_width_inches = Math.round(size.Width / 1440 * 10) / 10;
+											result.page_height_inches = Math.round(size.Height / 1440 * 10) / 10;
+											result.orientation = size.Width > size.Height ? 'landscape' : 'portrait';
+										}
+									}
+									// Get margins
+									if (section.GetPageMargins) {
+										var margins = section.GetPageMargins();
+										if (margins) {
+											result.margins = {
+												top: Math.round(margins.Top / 1440 * 10) / 10,
+												bottom: Math.round(margins.Bottom / 1440 * 10) / 10,
+												left: Math.round(margins.Left / 1440 * 10) / 10,
+												right: Math.round(margins.Right / 1440 * 10) / 10
+											};
+											result.text_width_inches = result.page_width_inches - result.margins.left - result.margins.right;
+											result.text_width_inches = Math.round(result.text_width_inches * 10) / 10;
+										}
+									}
+								} catch (e) {
+									// Use defaults on error
+								}
+								
+								// Calculate chars per line and recommended table columns
+								// Assumes ~10 chars per inch at 12pt font
+								result.chars_per_line = Math.round(result.text_width_inches * 12);
+								result.recommended_table_cols = Math.min(6, Math.floor(result.text_width_inches / 1.2));
+							}
+							
+							return result;
+						}, false, false, resolve);
+					});
+				}
+				// Return sensible defaults when not in OnlyOffice
+				return {
+					page_width_inches: 8.5,
+					text_width_inches: 6.5,
+					chars_per_line: 80,
+					orientation: 'portrait',
+					margins: { top: 1, bottom: 1, left: 1, right: 1 },
+					recommended_table_cols: 5,
+					formatting_tips: [
+						'Keep table columns under 6 for readability',
+						'Column headers should be 15 chars or less'
+					],
+					error: 'Not in OnlyOffice environment - using defaults'
+				};
+			},
+
 			'get_current_paragraph': async function() {
 				if (window.Asc && window.Asc.plugin && window.Asc.plugin.callCommand) {
 					return new Promise(function(resolve) {
@@ -347,11 +610,77 @@
 							var para = doc.GetCurrentParagraph ? doc.GetCurrentParagraph() : null;
 							var text = para && para.GetText ? para.GetText({ NewLineSeparator: '\n' }) : '';
 							var styleName = '';
+							var isHeading = false;
+							var headingLevel = 0;
+							var indentLeft = 0;
+							var spacingBefore = 0;
+							var spacingAfter = 0;
+							var alignment = 'left';
+							
 							try {
 								var style = para && para.GetStyle ? para.GetStyle() : null;
 								styleName = style && style.GetName ? style.GetName() : '';
+								
+								// Check if it's a heading style
+								if (styleName.indexOf('Heading') === 0 || styleName.indexOf('heading') === 0) {
+									isHeading = true;
+									var levelMatch = styleName.match(/\d+/);
+									headingLevel = levelMatch ? parseInt(levelMatch[0]) : 1;
+								}
+								
+								// Get paragraph formatting
+								if (para) {
+									try {
+										var indent = para.GetIndLeft ? para.GetIndLeft() : 0;
+										indentLeft = indent || 0;
+									} catch (e) {}
+									
+									try {
+										var before = para.GetSpacingBefore ? para.GetSpacingBefore() : 0;
+										spacingBefore = before || 0;
+									} catch (e) {}
+									
+									try {
+										var after = para.GetSpacingAfter ? para.GetSpacingAfter() : 0;
+										spacingAfter = after || 0;
+									} catch (e) {}
+									
+									try {
+										var jc = para.GetJc ? para.GetJc() : 'left';
+										alignment = jc || 'left';
+									} catch (e) {}
+								}
 							} catch (e) {}
-							return { text: text, style: styleName };
+							
+							// Determine content type
+							var contentType = 'paragraph';
+							if (isHeading) {
+								contentType = 'heading_' + headingLevel;
+							} else if (styleName === 'Title') {
+								contentType = 'title';
+							} else if (styleName === 'Subtitle') {
+								contentType = 'subtitle';
+							} else if (styleName.indexOf('List') !== -1) {
+								contentType = 'list_item';
+							} else if (styleName.indexOf('TOC') !== -1) {
+								contentType = 'table_of_contents';
+							}
+							
+							return { 
+								text: text, 
+								style: styleName,
+								content_type: contentType,
+								is_heading: isHeading,
+								heading_level: headingLevel,
+								formatting: {
+									indent_left: indentLeft,
+									spacing_before: spacingBefore,
+									spacing_after: spacingAfter,
+									alignment: alignment
+								},
+								char_count: text.length,
+								is_empty: text.trim().length === 0
+							};
 						}, false, false, resolve);
 					});
 				}
@@ -1102,18 +1431,567 @@
 				}
 				
 				return { success: false, error: 'Not in OnlyOffice environment' };
+			},
+			
+			// =========================================================================
+			// HIGH-LEVEL SECTION-AWARE EDITING TOOLS
+			// These provide semantic, position-aware document editing
+			// =========================================================================
+			
+			'insert_at_heading': async function(params) {
+				console.log('insert_at_heading called with:', params);
+				
+				if (!params || !params.heading_text || !params.content) {
+					return { success: false, error: 'heading_text and content are required' };
+				}
+				
+				var headingText = params.heading_text;
+				var content = params.content;
+				var position = params.position || 'after_heading';
+				var format = params.format || 'markdown';
+				
+				if (window.Asc && window.Asc.plugin && window.Asc.plugin.callCommand) {
+					// First, find the heading and get document structure
+					var headingInfo = await new Promise(function(resolve) {
+						window.Asc.plugin.callCommand(function() {
+							var doc = Api.GetDocument();
+							var count = doc.GetElementsCount();
+							var targetIndex = -1;
+							var nextHeadingIndex = -1;
+							var targetLevel = 0;
+							
+							// Find the target heading
+							for (var i = 0; i < count; i++) {
+								var elem = doc.GetElement(i);
+								if (elem.GetClassType && elem.GetClassType() === 'paragraph') {
+									var style = elem.GetStyle();
+									if (style) {
+										var styleName = style.GetName ? style.GetName() : '';
+										if (styleName.indexOf('Heading') === 0 || styleName.indexOf('heading') === 0) {
+											var text = elem.GetText ? elem.GetText() : '';
+											// Check if this heading matches (partial match)
+											if (text.toLowerCase().indexOf(Asc.scope.headingText.toLowerCase()) !== -1 ||
+												Asc.scope.headingText.toLowerCase().indexOf(text.toLowerCase()) !== -1) {
+												targetIndex = i;
+												// Extract level from style name
+												var levelMatch = styleName.match(/\d+/);
+												targetLevel = levelMatch ? parseInt(levelMatch[0]) : 1;
+												break;
+											}
+										}
+									}
+								}
+							}
+							
+							if (targetIndex === -1) {
+								return { found: false, error: 'Heading not found: ' + Asc.scope.headingText };
+							}
+							
+							// Find next heading of same or higher level
+							for (var j = targetIndex + 1; j < count; j++) {
+								var elem2 = doc.GetElement(j);
+								if (elem2.GetClassType && elem2.GetClassType() === 'paragraph') {
+									var style2 = elem2.GetStyle();
+									if (style2) {
+										var styleName2 = style2.GetName ? style2.GetName() : '';
+										if (styleName2.indexOf('Heading') === 0 || styleName2.indexOf('heading') === 0) {
+											var levelMatch2 = styleName2.match(/\d+/);
+											var level2 = levelMatch2 ? parseInt(levelMatch2[0]) : 1;
+											if (level2 <= targetLevel) {
+												nextHeadingIndex = j;
+												break;
+											}
+										}
+									}
+								}
+							}
+							
+							return {
+								found: true,
+								targetIndex: targetIndex,
+								nextHeadingIndex: nextHeadingIndex,
+								targetLevel: targetLevel,
+								elementCount: count
+							};
+						}, false, false, resolve);
+					});
+					
+					// Pass parameters via Asc.scope
+					window.Asc.scope.headingText = headingText;
+					
+					if (!headingInfo || !headingInfo.found) {
+						return { success: false, error: headingInfo ? headingInfo.error : 'Failed to find heading' };
+					}
+					
+					// Now insert content at the appropriate position
+					// We'll use PasteHtml for formatted content
+					var htmlContent = content;
+					if (format === 'markdown') {
+						htmlContent = markdownToHtml(content);
+					}
+					
+					// Navigate to the correct position based on position parameter
+					window.Asc.scope.targetIndex = headingInfo.targetIndex;
+					window.Asc.scope.nextHeadingIndex = headingInfo.nextHeadingIndex;
+					window.Asc.scope.position = position;
+					
+					await new Promise(function(resolve) {
+						window.Asc.plugin.callCommand(function() {
+							var doc = Api.GetDocument();
+							var pos = Asc.scope.position;
+							var targetIdx = Asc.scope.targetIndex;
+							var nextIdx = Asc.scope.nextHeadingIndex;
+							
+							// Get the target element to position cursor
+							if (pos === 'after_heading') {
+								// Position right after the heading
+								var headingElem = doc.GetElement(targetIdx);
+								if (headingElem && headingElem.SetCursorPos) {
+									headingElem.SetCursorPos();
+								}
+							} else if (pos === 'end_of_section') {
+								// Position at end of section (before next heading or end of doc)
+								var endIdx = nextIdx > 0 ? nextIdx - 1 : doc.GetElementsCount() - 1;
+								var endElem = doc.GetElement(endIdx);
+								if (endElem && endElem.SetCursorPos) {
+									endElem.SetCursorPos();
+								}
+							} else if (pos === 'before_heading') {
+								// Position before the heading
+								if (targetIdx > 0) {
+									var prevElem = doc.GetElement(targetIdx - 1);
+									if (prevElem && prevElem.SetCursorPos) {
+										prevElem.SetCursorPos();
+									}
+								}
+							}
+							return { positioned: true };
+						}, false, false, resolve);
+					});
+					
+					// Now paste the content with AI authorship
+					return ToolExecutor.executeWithAIAuthor(async function() {
+						return new Promise(function(resolve) {
+							window.Asc.plugin.executeMethod('PasteHtml', ['<br>' + htmlContent], function(result) {
+								console.log('insert_at_heading PasteHtml result:', result);
+								resolve({ 
+									success: true, 
+									message: 'Content inserted ' + position + ' "' + headingText + '"',
+									heading: headingText,
+									position: position
+								});
+							});
+						});
+					});
+				}
+				
+				return { success: false, error: 'Not in OnlyOffice environment' };
+			},
+			
+			// Read content by page range - for very long documents
+			'read_pages': async function(params) {
+				console.log('read_pages called with:', params);
+				
+				var startPage = (params && params.start_page) ? params.start_page : 1;
+				var endPage = (params && params.end_page) ? params.end_page : startPage;
+				var maxChars = (params && params.max_chars) ? params.max_chars : 10000;
+				
+				if (window.Asc && window.Asc.plugin && window.Asc.plugin.callCommand) {
+					window.Asc.scope.startPage = startPage;
+					window.Asc.scope.endPage = endPage;
+					window.Asc.scope.maxChars = maxChars;
+					
+					return new Promise(function(resolve) {
+						window.Asc.plugin.callCommand(function() {
+							var doc = Api.GetDocument();
+							var pageCount = doc.GetPageCount ? doc.GetPageCount() : 0;
+							
+							// Validate page range
+							var start = Math.max(1, Math.min(Asc.scope.startPage, pageCount));
+							var end = Math.max(start, Math.min(Asc.scope.endPage, pageCount));
+							
+							// Get document as markdown and extract page range
+							// This is approximate since we don't have exact page boundaries
+							var md = doc.ToMarkdown ? doc.ToMarkdown(true, false, false, false) : '';
+							
+							// Estimate chars per page
+							var charsPerPage = md.length / Math.max(1, pageCount);
+							var startChar = Math.floor((start - 1) * charsPerPage);
+							var endChar = Math.min(md.length, Math.floor(end * charsPerPage));
+							
+							// Extract content
+							var content = md.substring(startChar, Math.min(endChar, startChar + Asc.scope.maxChars));
+							
+							// Find section boundaries if possible
+							if (startChar > 0) {
+								// Try to start at a heading
+								var headingMatch = content.match(/^[^#]*?(#{1,6}\s)/);
+								if (headingMatch && headingMatch.index < 200) {
+									content = content.substring(headingMatch.index);
+								}
+							}
+							
+							return {
+								success: true,
+								start_page: start,
+								end_page: end,
+								total_pages: pageCount,
+								content: content,
+								content_length: content.length,
+								truncated: (endChar - startChar) > Asc.scope.maxChars
+							};
+						}, false, false, resolve);
+					});
+				}
+				
+				return { success: false, error: 'Not in OnlyOffice environment' };
+			},
+			
+			// Get hierarchical structure of a specific section
+			'get_subsections': async function(params) {
+				console.log('get_subsections called with:', params);
+				
+				if (!params || !params.parent_heading) {
+					return { success: false, error: 'parent_heading is required' };
+				}
+				
+				var parentHeading = params.parent_heading;
+				var maxDepth = params.max_depth || 3;
+				
+				if (window.Asc && window.Asc.plugin && window.Asc.plugin.callCommand) {
+					window.Asc.scope.parentHeading = parentHeading;
+					window.Asc.scope.maxDepth = maxDepth;
+					
+					return new Promise(function(resolve) {
+						window.Asc.plugin.callCommand(function() {
+							var doc = Api.GetDocument();
+							var count = doc.GetElementsCount();
+							var subsections = [];
+							var inSection = false;
+							var parentLevel = 0;
+							var parentCharCount = 0;
+							
+							for (var i = 0; i < count; i++) {
+								var elem = doc.GetElement(i);
+								if (elem.GetClassType && elem.GetClassType() === 'paragraph') {
+									var style = elem.GetStyle();
+									var styleName = style ? (style.GetName ? style.GetName() : '') : '';
+									var text = elem.GetText ? elem.GetText() : '';
+									
+									if (styleName.indexOf('Heading') === 0 || styleName.indexOf('heading') === 0) {
+										var levelMatch = styleName.match(/\d+/);
+										var level = levelMatch ? parseInt(levelMatch[0]) : 1;
+										
+										// Check if this is our parent
+										if (text.toLowerCase().indexOf(Asc.scope.parentHeading.toLowerCase()) !== -1) {
+											inSection = true;
+											parentLevel = level;
+											continue;
+										}
+										
+										// Check if we've exited the section
+										if (inSection && level <= parentLevel) {
+											break; // Done with this section
+										}
+										
+										// Record subsection if within depth limit
+										if (inSection && level <= parentLevel + Asc.scope.maxDepth) {
+											subsections.push({
+												heading: text.trim(),
+												level: level,
+												relative_level: level - parentLevel,
+												element_index: i,
+												char_count: 0
+											});
+										}
+									} else if (inSection && subsections.length > 0 && text.trim()) {
+										// Add char count to most recent subsection
+										subsections[subsections.length - 1].char_count += text.length;
+									} else if (inSection && subsections.length === 0 && text.trim()) {
+										// Content before first subsection
+										parentCharCount += text.length;
+									}
+								}
+							}
+							
+							return {
+								success: true,
+								parent_heading: Asc.scope.parentHeading,
+								parent_content_chars: parentCharCount,
+								subsections: subsections,
+								total_subsections: subsections.length
+							};
+						}, false, false, resolve);
+					});
+				}
+				
+				return { success: false, error: 'Not in OnlyOffice environment' };
+			},
+			
+			'get_section_content': async function(params) {
+				console.log('get_section_content called with:', params);
+				
+				if (!params || !params.heading_text) {
+					return { success: false, error: 'heading_text is required' };
+				}
+				
+				var headingText = params.heading_text;
+				var includeSubsections = params.include_subsections || false;
+				var maxChars = params.max_chars || 5000;
+				
+				if (window.Asc && window.Asc.plugin && window.Asc.plugin.callCommand) {
+					window.Asc.scope.headingText = headingText;
+					window.Asc.scope.includeSubsections = includeSubsections;
+					window.Asc.scope.maxChars = maxChars;
+					
+					return new Promise(function(resolve) {
+						window.Asc.plugin.callCommand(function() {
+							var doc = Api.GetDocument();
+							var count = doc.GetElementsCount();
+							var targetIndex = -1;
+							var targetLevel = 0;
+							var endIndex = count;
+							var content = [];
+							
+							// Find the target heading
+							for (var i = 0; i < count; i++) {
+								var elem = doc.GetElement(i);
+								if (elem.GetClassType && elem.GetClassType() === 'paragraph') {
+									var style = elem.GetStyle();
+									if (style) {
+										var styleName = style.GetName ? style.GetName() : '';
+										if (styleName.indexOf('Heading') === 0 || styleName.indexOf('heading') === 0) {
+											var text = elem.GetText ? elem.GetText() : '';
+											if (text.toLowerCase().indexOf(Asc.scope.headingText.toLowerCase()) !== -1) {
+												targetIndex = i;
+												var levelMatch = styleName.match(/\d+/);
+												targetLevel = levelMatch ? parseInt(levelMatch[0]) : 1;
+												break;
+											}
+										}
+									}
+								}
+							}
+							
+							if (targetIndex === -1) {
+								return { success: false, error: 'Section not found: ' + Asc.scope.headingText };
+							}
+							
+							// Find end of section
+							for (var j = targetIndex + 1; j < count; j++) {
+								var elem2 = doc.GetElement(j);
+								if (elem2.GetClassType && elem2.GetClassType() === 'paragraph') {
+									var style2 = elem2.GetStyle();
+									if (style2) {
+										var styleName2 = style2.GetName ? style2.GetName() : '';
+										if (styleName2.indexOf('Heading') === 0 || styleName2.indexOf('heading') === 0) {
+											var levelMatch2 = styleName2.match(/\d+/);
+											var level2 = levelMatch2 ? parseInt(levelMatch2[0]) : 1;
+											// Stop at same or higher level heading (unless including subsections)
+											if (level2 <= targetLevel || (!Asc.scope.includeSubsections && level2 > targetLevel)) {
+												if (!Asc.scope.includeSubsections || level2 <= targetLevel) {
+													endIndex = j;
+													break;
+												}
+											}
+										}
+									}
+								}
+							}
+							
+							// Collect content
+							var totalChars = 0;
+							for (var k = targetIndex; k < endIndex && totalChars < Asc.scope.maxChars; k++) {
+								var elem3 = doc.GetElement(k);
+								var text3 = elem3.GetText ? elem3.GetText() : '';
+								content.push(text3);
+								totalChars += text3.length;
+							}
+							
+							return {
+								success: true,
+								heading: doc.GetElement(targetIndex).GetText(),
+								level: targetLevel,
+								content: content.join('\n\n'),
+								char_count: totalChars,
+								truncated: totalChars >= Asc.scope.maxChars
+							};
+						}, false, false, resolve);
+					});
+				}
+				
+				return { success: false, error: 'Not in OnlyOffice environment' };
+			},
+			
+			'find_and_replace': async function(params) {
+				console.log('find_and_replace called with:', params);
+				
+				if (!params || !params.find_text) {
+					return { success: false, error: 'find_text is required' };
+				}
+				
+				var findText = params.find_text;
+				var replaceWith = params.replace_with || '';
+				var inSection = params.in_section || null;
+				var matchCase = params.match_case || false;
+				var replaceAll = params.replace_all !== false; // default true
+				
+				if (window.Asc && window.Asc.plugin && window.Asc.plugin.callCommand) {
+					window.Asc.scope.findText = findText;
+					window.Asc.scope.replaceWith = replaceWith;
+					window.Asc.scope.matchCase = matchCase;
+					window.Asc.scope.replaceAll = replaceAll;
+					window.Asc.scope.inSection = inSection;
+					
+					return ToolExecutor.executeWithAIAuthor(async function() {
+						return new Promise(function(resolve) {
+							window.Asc.plugin.callCommand(function() {
+								var doc = Api.GetDocument();
+								var find = Asc.scope.findText;
+								var replace = Asc.scope.replaceWith;
+								var mc = Asc.scope.matchCase;
+								var all = Asc.scope.replaceAll;
+								
+								var ranges = doc.Search(find, mc);
+								var replacedCount = 0;
+								
+								if (ranges && ranges.length > 0) {
+									// Replace either first or all
+									var limit = all ? ranges.length : 1;
+									for (var i = 0; i < limit; i++) {
+										var range = ranges[i];
+										if (range) {
+											range.Select(true);
+											// Delete and insert replacement
+											range.Delete();
+											if (replace) {
+												var para = doc.GetCurrentParagraph();
+												if (para) {
+													para.AddText(replace);
+												}
+											}
+											replacedCount++;
+										}
+									}
+								}
+								
+								return {
+									success: true,
+									replaced_count: replacedCount,
+									find_text: find,
+									replace_with: replace
+								};
+							}, true, false, resolve);
+						});
+					});
+				}
+				
+				return { success: false, error: 'Not in OnlyOffice environment' };
+			},
+			
+			// Enhanced document map with hierarchical structure for long documents
+			'get_document_map': async function(params) {
+				console.log('get_document_map called with:', params);
+				
+				var maxDepth = (params && params.max_depth) ? params.max_depth : 6;
+				var includePageNumbers = (params && params.include_page_numbers) ? params.include_page_numbers : false;
+				var parentHeading = (params && params.parent_heading) ? params.parent_heading : null;
+				
+				if (window.Asc && window.Asc.plugin && window.Asc.plugin.callCommand) {
+					window.Asc.scope.maxDepth = maxDepth;
+					window.Asc.scope.parentHeading = parentHeading;
+					
+					return new Promise(function(resolve) {
+						window.Asc.plugin.callCommand(function() {
+							var doc = Api.GetDocument();
+							var count = doc.GetElementsCount();
+							var sections = [];
+							var currentSection = null;
+							var sectionCounter = 0;
+							var inTargetSection = !Asc.scope.parentHeading; // If no parent, include all
+							var targetLevel = 0;
+							
+							for (var i = 0; i < count; i++) {
+								var elem = doc.GetElement(i);
+								if (elem.GetClassType && elem.GetClassType() === 'paragraph') {
+									var style = elem.GetStyle();
+									var styleName = style ? (style.GetName ? style.GetName() : '') : '';
+									var text = elem.GetText ? elem.GetText() : '';
+									
+									if (styleName.indexOf('Heading') === 0 || styleName.indexOf('heading') === 0) {
+										var levelMatch = styleName.match(/\d+/);
+										var level = levelMatch ? parseInt(levelMatch[0]) : 1;
+										
+										// If filtering by parent heading
+										if (Asc.scope.parentHeading) {
+											if (text.toLowerCase().indexOf(Asc.scope.parentHeading.toLowerCase()) !== -1) {
+												inTargetSection = true;
+												targetLevel = level;
+												continue; // Skip the parent itself
+											}
+											if (inTargetSection && level <= targetLevel) {
+												inTargetSection = false; // Exited the section
+											}
+											if (!inTargetSection) continue;
+										}
+										
+										// Only include up to maxDepth
+										if (level > Asc.scope.maxDepth) continue;
+										
+										// Save previous section
+										if (currentSection) {
+											sections.push(currentSection);
+										}
+										
+										sectionCounter++;
+										currentSection = {
+											id: 'sec_' + sectionCounter,
+											heading: text.trim(),
+											level: level,
+											char_count: 0,
+											element_index: i,
+											has_content: false,
+											subsection_count: 0
+										};
+									} else if (currentSection && text.trim()) {
+										// Content paragraph
+										currentSection.char_count += text.length;
+										currentSection.has_content = true;
+									}
+								}
+							}
+							
+							// Add last section
+							if (currentSection) {
+								sections.push(currentSection);
+							}
+							
+							return {
+								success: true,
+								sections: sections,
+								total_sections: sections.length
+							};
+						}, false, false, resolve);
+					});
+				}
+				
+				return { success: false, error: 'Not in OnlyOffice environment' };
 			}
 		},
 		
 		execute: async function(toolName, params) {
-			if (!this.tools[toolName]) {
+			// Check both this.tools[toolName] and this[toolName] due to structure variations
+			var toolFn = this.tools[toolName] || this[toolName];
+			if (!toolFn || typeof toolFn !== 'function') {
+				console.error('Unknown tool:', toolName, 'Available in tools:', Object.keys(this.tools), 'Direct props:', Object.keys(this).filter(function(k) { return typeof this[k] === 'function' && k !== 'execute'; }.bind(this)));
 				return { success: false, error: 'Unknown tool: ' + toolName };
 			}
 			try {
-				var result = await this.tools[toolName](params || {});
+				// Use .call(this, ...) to preserve context
+				var result = await toolFn.call(this, params || {});
 				return { success: true, result: result };
 			} catch (e) {
-				console.error('Tool execution error:', e);
+				console.error('Tool execution error for', toolName, ':', e);
 				return { success: false, error: e.message };
 			}
 		}
@@ -1316,13 +2194,23 @@
 			'get_selected_text': '📋',
 			'get_document_text': '📄',
 			'get_document_outline': '📑',
+			'get_layout_constraints': '📐',
+			'get_page_info': '📄',
+			'get_document_map': '🗺️',
+			'get_section_content': '📖',
+			'get_subsections': '🔽',
+			'read_pages': '📑',
 			'search_document': '🔍',
 			'get_content_controls': '📝',
 			'insert_text': '✏️',
 			'replace_selection': '🔄',
 			'delete_selection': '🗑️',
 			'fill_content_control': '📝',
-			'add_comment': '💬'
+			'add_comment': '💬',
+			'insert_at_heading': '📍',
+			'find_and_replace': '🔄',
+			'regulatory_search': '⚖️',
+			'search_reference_documents': '📚'
 		};
 		return icons[toolName] || '🔧';
 	}
@@ -1339,6 +2227,282 @@
 		} catch (e) {
 			return String(obj);
 		}
+	}
+
+	// =================================================================
+	// Task Plan UI Functions
+	// =================================================================
+	
+	// Inject task plan styles if not already present
+	(function injectTaskPlanStyles() {
+		if (document.getElementById('task-plan-styles')) return;
+		var style = document.createElement('style');
+		style.id = 'task-plan-styles';
+		style.textContent = `
+			.task-plan {
+				background: linear-gradient(135deg, rgba(155, 92, 255, 0.05) 0%, rgba(100, 60, 200, 0.03) 100%);
+				border: 1px solid rgba(155, 92, 255, 0.2);
+				border-radius: 12px;
+				padding: 16px;
+				margin: 12px 0;
+				font-family: inherit;
+			}
+			.task-plan-header {
+				margin-bottom: 16px;
+			}
+			.task-plan-title {
+				font-size: 16px;
+				font-weight: 600;
+				color: #333;
+				display: flex;
+				align-items: center;
+				gap: 8px;
+			}
+			.plan-icon { font-size: 18px; }
+			.task-plan-goal {
+				font-size: 13px;
+				color: #666;
+				margin-top: 6px;
+				line-height: 1.4;
+			}
+			.task-plan-progress {
+				margin-top: 12px;
+			}
+			.progress-bar {
+				height: 6px;
+				background: rgba(155, 92, 255, 0.1);
+				border-radius: 3px;
+				overflow: hidden;
+			}
+			.progress-fill {
+				height: 100%;
+				background: linear-gradient(90deg, #9B5CFF, #7C3AED);
+				border-radius: 3px;
+				transition: width 0.3s ease;
+			}
+			.progress-text {
+				font-size: 11px;
+				color: #888;
+				margin-top: 6px;
+				text-align: right;
+			}
+			.task-list {
+				display: flex;
+				flex-direction: column;
+				gap: 8px;
+			}
+			.task-item {
+				display: flex;
+				align-items: flex-start;
+				gap: 10px;
+				padding: 10px 12px;
+				background: white;
+				border-radius: 8px;
+				border: 1px solid #eee;
+				transition: all 0.2s ease;
+			}
+			.task-item.task-in_progress {
+				border-color: rgba(155, 92, 255, 0.4);
+				background: rgba(155, 92, 255, 0.03);
+			}
+			.task-item.task-completed {
+				border-color: rgba(34, 197, 94, 0.3);
+				background: rgba(34, 197, 94, 0.03);
+			}
+			.task-item.task-failed {
+				border-color: rgba(239, 68, 68, 0.3);
+				background: rgba(239, 68, 68, 0.03);
+			}
+			.task-checkbox {
+				flex-shrink: 0;
+				width: 20px;
+				height: 20px;
+				display: flex;
+				align-items: center;
+				justify-content: center;
+			}
+			.status-icon {
+				font-size: 14px;
+				font-weight: bold;
+			}
+			.status-icon.pending { color: #ccc; }
+			.status-icon.in-progress { color: #9B5CFF; }
+			.status-icon.completed { color: #22C55E; }
+			.status-icon.failed { color: #EF4444; }
+			.status-icon.skipped { color: #888; }
+			.spinner-small {
+				width: 14px;
+				height: 14px;
+				border: 2px solid rgba(155, 92, 255, 0.2);
+				border-top-color: #9B5CFF;
+				border-radius: 50%;
+				animation: spin 0.8s linear infinite;
+			}
+			@keyframes spin {
+				to { transform: rotate(360deg); }
+			}
+			.task-content {
+				flex: 1;
+				min-width: 0;
+			}
+			.task-title {
+				font-size: 13px;
+				font-weight: 500;
+				color: #333;
+				line-height: 1.3;
+			}
+			.task-section-badge {
+				display: inline-block;
+				font-size: 10px;
+				padding: 2px 6px;
+				background: rgba(155, 92, 255, 0.1);
+				color: #7C3AED;
+				border-radius: 4px;
+				margin-top: 4px;
+			}
+			.task-result {
+				font-size: 11px;
+				max-width: 150px;
+			}
+			.task-success {
+				color: #22C55E;
+			}
+			.task-error {
+				color: #EF4444;
+			}
+			.plan-complete-summary {
+				margin-top: 12px;
+				padding: 12px;
+				background: rgba(34, 197, 94, 0.1);
+				border-radius: 8px;
+				color: #16A34A;
+				font-size: 13px;
+			}
+			.plan-completed .task-plan-header {
+				opacity: 0.8;
+			}
+		`;
+		document.head.appendChild(style);
+	})();
+	
+	/**
+	 * Render a task plan with checkboxes for each task.
+	 * Inspired by Cursor's planning UI.
+	 */
+	function renderTaskPlan(planData) {
+		var tasksHtml = planData.tasks.map(function(task, index) {
+			var statusIcon = getTaskStatusIcon(task.status);
+			var sectionBadge = task.target_section 
+				? '<span class="task-section-badge">' + escapeHtml(task.target_section) + '</span>'
+				: '';
+			
+			return '<div class="task-item" id="task-' + task.id + '" data-task-id="' + task.id + '">' +
+				'<div class="task-checkbox">' + statusIcon + '</div>' +
+				'<div class="task-content">' +
+					'<div class="task-title">' + escapeHtml(task.title) + '</div>' +
+					sectionBadge +
+				'</div>' +
+				'<div class="task-result"></div>' +
+			'</div>';
+		}).join('');
+		
+		return '<div class="task-plan" id="task-plan-' + planData.plan_id + '">' +
+			'<div class="task-plan-header">' +
+				'<div class="task-plan-title">' +
+					'<span class="plan-icon">📋</span> ' + escapeHtml(planData.title) +
+				'</div>' +
+				'<div class="task-plan-goal">' + escapeHtml(planData.goal) + '</div>' +
+				'<div class="task-plan-progress">' +
+					'<div class="progress-bar">' +
+						'<div class="progress-fill" style="width: 0%"></div>' +
+					'</div>' +
+					'<div class="progress-text">0 / ' + planData.tasks.length + ' tasks</div>' +
+				'</div>' +
+			'</div>' +
+			'<div class="task-list">' + tasksHtml + '</div>' +
+		'</div>';
+	}
+	
+	/**
+	 * Get the appropriate icon for a task status.
+	 */
+	function getTaskStatusIcon(status) {
+		switch (status) {
+			case 'pending':
+				return '<span class="status-icon pending">○</span>';
+			case 'in_progress':
+				return '<span class="status-icon in-progress"><span class="spinner-small"></span></span>';
+			case 'completed':
+				return '<span class="status-icon completed">✓</span>';
+			case 'failed':
+				return '<span class="status-icon failed">✗</span>';
+			case 'skipped':
+				return '<span class="status-icon skipped">–</span>';
+			default:
+				return '<span class="status-icon">○</span>';
+		}
+	}
+	
+	/**
+	 * Update the status of a task in the UI.
+	 */
+	function updateTaskStatus(taskId, status, result) {
+		var taskEl = document.getElementById('task-' + taskId);
+		if (!taskEl) return;
+		
+		// Update checkbox
+		var checkboxEl = taskEl.querySelector('.task-checkbox');
+		if (checkboxEl) {
+			checkboxEl.innerHTML = getTaskStatusIcon(status);
+		}
+		
+		// Update class for styling
+		taskEl.className = 'task-item task-' + status;
+		
+		// Show result/error if provided
+		if (result) {
+			var resultEl = taskEl.querySelector('.task-result');
+			if (resultEl) {
+				var resultClass = status === 'failed' ? 'task-error' : 'task-success';
+				resultEl.innerHTML = '<div class="' + resultClass + '">' + 
+					escapeHtml(result.substring(0, 100)) + 
+					(result.length > 100 ? '...' : '') + '</div>';
+			}
+		}
+	}
+	
+	/**
+	 * Update the plan's overall progress.
+	 */
+	function updatePlanProgress(progressData) {
+		var planEl = document.querySelector('.task-plan');
+		if (!planEl) return;
+		
+		var percent = progressData.percent || 0;
+		var completed = progressData.completed || 0;
+		var total = progressData.total || 0;
+		
+		// Update progress bar
+		var fillEl = planEl.querySelector('.progress-fill');
+		if (fillEl) {
+			fillEl.style.width = percent + '%';
+		}
+		
+		// Update text
+		var textEl = planEl.querySelector('.progress-text');
+		if (textEl) {
+			textEl.textContent = completed + ' / ' + total + ' tasks (' + percent + '%)';
+		}
+	}
+	
+	/**
+	 * Update the plan's overall status.
+	 */
+	function updatePlanStatus(planId, status) {
+		var planEl = document.getElementById('task-plan-' + planId);
+		if (!planEl) return;
+		
+		planEl.className = 'task-plan plan-' + status;
 	}
 
 	// Strip internal processing tags from backend response
@@ -1543,25 +2707,228 @@
 			});
 	}
 
-	// Gather document context for backend
+	// Gather comprehensive document context for backend
+	// Based on Anthropic's context engineering best practices:
+	// - Provide rich, high-signal context about the working environment
+	// - Include position, structure, and formatting awareness
+	// - Enable agent to understand spatial constraints
 	async function gatherDocumentContext() {
 		var context = {
+			// Selection & cursor
 			selected_text: null,
+			has_selection: false,
+			cursor_position: null,
+			
+			// Document structure
 			document_outline: null,
-			cursor_position: 'current'
+			section_map: null,        // Sections with char counts
+			total_sections: 0,
+			
+			// Page/layout awareness (critical for formatting decisions)
+			page_info: null,
+			document_stats: null,
+			
+			// Current location context
+			current_section: null,
+			current_paragraph_style: null,
+			surrounding_context: null  // ~500 chars before/after cursor
 		};
 		
 		try {
-			// Try to get selected text
+			// 1. Get selected text (limit to 2000 chars to prevent context overflow)
 			var selectedResult = await ToolExecutor.execute('get_selected_text');
 			if (selectedResult.success && selectedResult.result) {
-				context.selected_text = selectedResult.result;
+				var selectedText = selectedResult.result;
+				// Truncate large selections to prevent rate limits
+				if (selectedText.length > 2000) {
+					context.selected_text = selectedText.substring(0, 1500) + 
+						'\n\n[... selection truncated, ' + (selectedText.length - 1500) + ' more chars ...]\n\n' +
+						selectedText.substring(selectedText.length - 300);
+				} else {
+					context.selected_text = selectedText;
+				}
+				context.has_selection = true;
 			}
 		} catch (e) {
 			console.warn('Could not get selected text:', e);
 		}
 		
+		try {
+			// 2. Get page info (position awareness)
+			var pageResult = await ToolExecutor.execute('get_page_info');
+			if (pageResult && !pageResult.error) {
+				context.page_info = {
+					current_page: pageResult.page_number,
+					total_pages: pageResult.page_count,
+					position_in_doc: pageResult.page_count > 0 
+						? Math.round((pageResult.page_number / pageResult.page_count) * 100) + '%'
+						: 'unknown'
+				};
+			}
+		} catch (e) {
+			console.warn('Could not get page info:', e);
+		}
+		
+		try {
+			// 3. Get document outline/structure
+			var outlineResult = await ToolExecutor.execute('get_document_outline');
+			if (outlineResult && Array.isArray(outlineResult)) {
+				context.document_outline = outlineResult;
+				context.total_sections = outlineResult.length;
+				
+				// Build section map with abbreviated info (limit to first 50 sections)
+				var sectionsToInclude = outlineResult.slice(0, 50);
+				context.section_map = sectionsToInclude.map(function(h, idx) {
+					return {
+						index: idx,
+						level: h.level || 1,
+						heading: (h.text || '').substring(0, 60),
+						char_count: h.char_count || null
+					};
+				});
+				
+				// Note if there are more sections
+				if (outlineResult.length > 50) {
+					context.section_map.push({
+						index: -1,
+						note: '... and ' + (outlineResult.length - 50) + ' more sections (use get_document_map for full list)'
+					});
+				}
+			}
+		} catch (e) {
+			console.warn('Could not get document outline:', e);
+		}
+		
+		try {
+			// 4. Get current paragraph context (style awareness)
+			var paraResult = await ToolExecutor.execute('get_current_paragraph');
+			if (paraResult && !paraResult.error) {
+				context.current_paragraph_style = paraResult.style || 'Normal';
+				
+				// Enhanced style context for format-aware editing
+				context.current_context = {
+					content_type: paraResult.content_type || 'paragraph',
+					is_heading: paraResult.is_heading || false,
+					heading_level: paraResult.heading_level || 0,
+					is_empty: paraResult.is_empty || false,
+					char_count: paraResult.char_count || 0,
+					formatting: paraResult.formatting || {}
+				};
+				
+				// Get surrounding context - helps agent understand where cursor is
+				var paraText = paraResult.text || '';
+				if (paraText.length > 0) {
+					context.surrounding_context = paraText.substring(0, 500) + 
+						(paraText.length > 500 ? '...' : '');
+				}
+				
+				// Determine which section cursor is in based on document outline
+				if (context.document_outline && context.document_outline.length > 0) {
+					var currentHeading = null;
+					var prevHeading = null;
+					
+					// If cursor is in a heading, that's the current section
+					if (paraResult.is_heading) {
+						var cursorHeadingText = paraText.trim().substring(0, 60);
+						for (var i = 0; i < context.document_outline.length; i++) {
+							var h = context.document_outline[i];
+							if (h.text && h.text.substring(0, 60) === cursorHeadingText) {
+								currentHeading = h;
+								if (i > 0) prevHeading = context.document_outline[i - 1];
+								break;
+							}
+						}
+					}
+					
+					context.current_section = {
+						in_heading: paraResult.is_heading,
+						heading_text: currentHeading ? currentHeading.text : null,
+						heading_level: currentHeading ? currentHeading.level : (prevHeading ? prevHeading.level : null),
+						parent_section: prevHeading ? prevHeading.text : null,
+						position_hint: paraResult.is_heading ? 'at_heading' : 
+							(paraResult.is_empty ? 'empty_paragraph' : 'in_content')
+					};
+				}
+			}
+		} catch (e) {
+			console.warn('Could not get current paragraph:', e);
+		}
+		
+		try {
+			// 5. Get document stats via snapshot (efficient single call)
+			var snapshotResult = await ToolExecutor.execute('get_document_snapshot', {
+				include_outline: false,
+				include_markdown: false,
+				include_headers_footers: false
+			});
+			if (snapshotResult && !snapshotResult.error) {
+				context.document_stats = {
+					element_count: snapshotResult.element_count,
+					page_count: snapshotResult.page_count
+				};
+				context.cursor_position = {
+					page: snapshotResult.page_number,
+					paragraph_preview: (snapshotResult.current_paragraph || '').substring(0, 100)
+				};
+			}
+		} catch (e) {
+			console.warn('Could not get document snapshot:', e);
+		}
+		
+		// 6. Generate position summary for the agent (human-readable context)
+		context.position_summary = generatePositionSummary(context);
+		
 		return context;
+	}
+	
+	// Generate a human-readable summary of cursor position for the agent
+	function generatePositionSummary(context) {
+		var parts = [];
+		
+		// Page position
+		if (context.page_info) {
+			parts.push('Page ' + context.page_info.current_page + ' of ' + context.page_info.total_pages);
+		}
+		
+		// Current context type
+		if (context.current_context) {
+			var ctx = context.current_context;
+			if (ctx.is_heading) {
+				parts.push('Cursor is in a Heading ' + ctx.heading_level);
+			} else if (ctx.content_type === 'title') {
+				parts.push('Cursor is in the document Title');
+			} else if (ctx.content_type === 'list_item') {
+				parts.push('Cursor is in a list item');
+			} else if (ctx.is_empty) {
+				parts.push('Cursor is in an empty paragraph');
+			} else {
+				parts.push('Cursor is in a ' + (context.current_paragraph_style || 'Normal') + ' paragraph');
+			}
+		}
+		
+		// Current section
+		if (context.current_section && context.current_section.parent_section) {
+			parts.push('Under section: "' + context.current_section.parent_section + '"');
+		}
+		
+		// Selection status
+		if (context.has_selection && context.selected_text) {
+			var selLen = context.selected_text.length;
+			parts.push('Has selection (' + selLen + ' chars)');
+		}
+		
+		// Formatting hints
+		if (context.current_context && context.current_context.formatting) {
+			var fmt = context.current_context.formatting;
+			if (fmt.alignment && fmt.alignment !== 'left') {
+				parts.push('Alignment: ' + fmt.alignment);
+			}
+			if (fmt.indent_left > 0) {
+				parts.push('Indented');
+			}
+		}
+		
+		return parts.length > 0 ? parts.join(' | ') : 'Document position unknown';
 	}
 
 	// ============================================
@@ -2461,6 +3828,20 @@
 					}
 				}
 				break;
+			
+			case 'status':
+				// Status events (rate limiting, retries) - no progress change needed
+				break;
+			
+			// Task plan events - no stage tracking needed
+			case 'plan_created':
+			case 'plan_start':
+			case 'task_start':
+			case 'task_complete':
+			case 'plan_progress':
+			case 'plan_complete':
+				// These have their own UI tracking
+				break;
 		}
 	}
 	
@@ -2620,6 +4001,14 @@
 				editor_doc_id: DocIndex.getEditorDocId()
 			};
 			
+			// Include agent info for edit mode
+			if (state.mode === 'agent') {
+				var agentInfo = getSelectedAgentInfo();
+				if (agentInfo) {
+					requestData.agent = agentInfo;
+				}
+			}
+			
 			// Create assistant message container
 			appendMessageElement('<div class="message assistant"></div>');
 			var msgContainer = elements.messages.querySelector('.message.assistant:last-child');
@@ -2632,7 +4021,11 @@
 			var textContent = '';
 			
 			// Make SSE request
-			var response = await fetch(Config.BACKEND_URL + '/api/copilot/chat', {
+			var requestUrl = Config.BACKEND_URL + '/api/copilot/chat';
+			console.log('[Copilot] Making request to:', requestUrl);
+			console.log('[Copilot] Request data:', JSON.stringify(requestData, null, 2));
+			
+			var response = await fetch(requestUrl, {
 				method: 'POST',
 				headers: {
 					'Content-Type': 'application/json',
@@ -2641,6 +4034,8 @@
 				body: JSON.stringify(requestData),
 				signal: state.abortController.signal
 			});
+			
+			console.log('[Copilot] Response status:', response.status, response.statusText);
 			
 			if (!response.ok) {
 				throw new Error('Backend error: ' + response.status);
@@ -2694,9 +4089,12 @@
 				finalizeToolsContainer(msgContainer);
 			}
 			if (error.name === 'AbortError') {
-				console.log('Request aborted');
+				console.log('[Copilot] Request aborted by user');
 			} else {
-				console.error('Backend error:', error);
+				console.error('[Copilot] Backend error:', error);
+				console.error('[Copilot] Error name:', error.name);
+				console.error('[Copilot] Error message:', error.message);
+				console.error('[Copilot] Attempted URL was:', Config.BACKEND_URL + '/api/copilot/chat');
 				addMessage('error', 'Connection error: ' + error.message);
 				appendMessageElement('<div class="error-message">Connection error: ' + escapeHtml(error.message) + '</div>');
 			}
@@ -2876,6 +4274,74 @@
 				msgContainer.insertAdjacentHTML('beforeend', 
 					'<div class="error-message">' + escapeHtml(data.message) + '</div>');
 				scrollToBottom();
+				break;
+			
+			case 'status':
+				// Status messages (rate limiting, retries, etc)
+				console.log('Status:', data.message);
+				// Show as a subtle status indicator
+				var statusHtml = '<div class="status-message" style="color: #666; font-style: italic; padding: 4px 0; font-size: 12px;">' + 
+					escapeHtml(data.message || '') + '</div>';
+				msgContainer.insertAdjacentHTML('beforeend', statusHtml);
+				scrollToBottom();
+				// Auto-remove after 10 seconds
+				setTimeout(function() {
+					var statusEl = msgContainer.querySelector('.status-message:last-of-type');
+					if (statusEl) statusEl.remove();
+				}, 10000);
+				break;
+			
+			// =================================================================
+			// Task Planning Events (for complex multi-step tasks like CSR)
+			// =================================================================
+			
+			case 'plan_created':
+				// A task plan has been created - show the plan UI
+				console.log('[TaskPlan] Plan created:', data);
+				var planHtml = renderTaskPlan(data);
+				msgContainer.insertAdjacentHTML('beforeend', planHtml);
+				state.activePlanId = data.plan_id;
+				scrollToBottom();
+				break;
+			
+			case 'plan_start':
+				// Plan execution starting
+				console.log('[TaskPlan] Plan starting:', data);
+				updatePlanStatus(data.plan_id, 'in_progress');
+				break;
+			
+			case 'task_start':
+				// Individual task starting
+				console.log('[TaskPlan] Task starting:', data.task_id, data.title);
+				updateTaskStatus(data.task_id, 'in_progress');
+				break;
+			
+			case 'task_complete':
+				// Individual task completed
+				console.log('[TaskPlan] Task complete:', data.task_id, data.status);
+				updateTaskStatus(data.task_id, data.status, data.result || data.error);
+				break;
+			
+			case 'plan_progress':
+				// Progress update
+				console.log('[TaskPlan] Progress:', data);
+				updatePlanProgress(data);
+				break;
+			
+			case 'plan_complete':
+				// Plan finished
+				console.log('[TaskPlan] Plan complete:', data);
+				updatePlanStatus(data.plan_id, 'completed');
+				// Add completion summary
+				var summaryHtml = '<div class="plan-complete-summary">' +
+					'<strong>✓ Plan Complete</strong><br>' +
+					'Completed ' + data.progress.completed + ' of ' + data.progress.total + ' tasks' +
+					(data.progress.failed > 0 ? ' (' + data.progress.failed + ' failed)' : '') +
+					'</div>';
+				var planEl = document.getElementById('task-plan-' + data.plan_id);
+				if (planEl) {
+					planEl.insertAdjacentHTML('beforeend', summaryHtml);
+				}
 				break;
 			
 			case 'done':
@@ -3158,9 +4624,125 @@
 		elements.agentModeBtn.classList.toggle('active', mode === 'agent');
 		
 		elements.modeIndicator.textContent = mode === 'ask' ? 'Ask mode' : 'Edit mode';
-		elements.chatInput.placeholder = mode === 'ask' 
-			? 'Ask anything about your document...' 
-			: 'Tell me what to do with the document...';
+		
+		// Show/hide agent selector based on mode
+		if (elements.agentSelector) {
+			elements.agentSelector.style.display = mode === 'agent' ? 'flex' : 'none';
+		}
+		
+		// Set placeholder based on mode and selected agent
+		if (mode === 'ask') {
+			elements.chatInput.placeholder = 'Ask anything about your document...';
+		} else {
+			var agent = AGENTS[state.selectedAgent];
+			elements.chatInput.placeholder = agent ? agent.placeholder : 'Tell me what to do with the document...';
+		}
+	}
+	
+	// ============================================
+	// AGENT SELECTION
+	// ============================================
+	function selectAgent(agentId) {
+		if (!AGENTS[agentId]) return;
+		
+		state.selectedAgent = agentId;
+		var agent = AGENTS[agentId];
+		
+		// Update UI
+		if (elements.selectedAgentName) {
+			elements.selectedAgentName.textContent = agent.name;
+		}
+		if (elements.selectedAgentIcon) {
+			elements.selectedAgentIcon.innerHTML = agent.icon;
+		}
+		
+		// Update dropdown items
+		if (elements.agentDropdown) {
+			var items = elements.agentDropdown.querySelectorAll('.agent-option');
+			items.forEach(function(item) {
+				item.classList.toggle('active', item.dataset.agentId === agentId);
+			});
+		}
+		
+		// Update placeholder
+		elements.chatInput.placeholder = agent.placeholder;
+		
+		// Close dropdown
+		closeAgentDropdown();
+		
+		console.log('[Copilot] Selected agent:', agent.name);
+	}
+	
+	function toggleAgentDropdown() {
+		if (elements.agentDropdown) {
+			var isVisible = elements.agentDropdown.classList.contains('visible');
+			if (isVisible) {
+				closeAgentDropdown();
+			} else {
+				elements.agentDropdown.classList.add('visible');
+				// Add click outside listener
+				setTimeout(function() {
+					document.addEventListener('click', handleAgentDropdownOutsideClick);
+				}, 0);
+			}
+		}
+	}
+	
+	function closeAgentDropdown() {
+		if (elements.agentDropdown) {
+			elements.agentDropdown.classList.remove('visible');
+			document.removeEventListener('click', handleAgentDropdownOutsideClick);
+		}
+	}
+	
+	function handleAgentDropdownOutsideClick(e) {
+		if (elements.agentSelector && !elements.agentSelector.contains(e.target)) {
+			closeAgentDropdown();
+		}
+	}
+	
+	function renderAgentDropdown() {
+		if (!elements.agentDropdown) return;
+		
+		var html = '';
+		Object.keys(AGENTS).forEach(function(agentId) {
+			var agent = AGENTS[agentId];
+			var isActive = state.selectedAgent === agentId;
+			
+			html += '<div class="agent-option' + (isActive ? ' active' : '') + '" data-agent-id="' + agentId + '">';
+			html += '<div class="agent-option-icon">' + agent.icon + '</div>';
+			html += '<div class="agent-option-content">';
+			html += '<div class="agent-option-name">' + agent.name + '</div>';
+			html += '<div class="agent-option-desc">' + agent.description + '</div>';
+			html += '</div>';
+			if (isActive) {
+				html += '<svg class="agent-option-check" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>';
+			}
+			html += '</div>';
+		});
+		
+		elements.agentDropdown.innerHTML = html;
+		
+		// Add click handlers
+		var options = elements.agentDropdown.querySelectorAll('.agent-option');
+		options.forEach(function(option) {
+			option.addEventListener('click', function(e) {
+				e.stopPropagation();
+				selectAgent(option.dataset.agentId);
+			});
+		});
+	}
+	
+	function getSelectedAgentInfo() {
+		var agent = AGENTS[state.selectedAgent];
+		if (!agent) return null;
+		
+		return {
+			id: agent.id,
+			name: agent.name,
+			systemPrompt: agent.systemPrompt,
+			capabilities: agent.capabilities
+		};
 	}
 
 	// ============================================
@@ -3215,6 +4797,17 @@
 		// Mode switching
 		elements.askModeBtn.addEventListener('click', function() { setMode('ask'); });
 		elements.agentModeBtn.addEventListener('click', function() { setMode('agent'); });
+		
+		// Agent selector
+		if (elements.agentSelectorBtn) {
+			elements.agentSelectorBtn.addEventListener('click', function(e) {
+				e.stopPropagation();
+				toggleAgentDropdown();
+			});
+		}
+		
+		// Initialize agent dropdown options
+		renderAgentDropdown();
 		
 		// Sidebar
 		elements.sidebarToggle.addEventListener('click', toggleSidebar);
@@ -3890,6 +5483,12 @@
 			askModeBtn: document.getElementById('askModeBtn'),
 			agentModeBtn: document.getElementById('agentModeBtn'),
 			modeIndicator: document.getElementById('modeIndicator'),
+			// Agent selector elements (for edit mode)
+			agentSelector: document.getElementById('agentSelector'),
+			agentSelectorBtn: document.getElementById('agentSelectorBtn'),
+			agentDropdown: document.getElementById('agentDropdown'),
+			selectedAgentName: document.getElementById('selectedAgentName'),
+			selectedAgentIcon: document.getElementById('selectedAgentIcon'),
 			// Document indexing elements
 			indexDocsBtn: document.getElementById('indexDocsBtn'),
 			indexBadge: document.getElementById('indexBadge'),
@@ -3944,7 +5543,17 @@
 		setMode('ask');
 		
 		// Log configuration
-		console.log('Copilot initialized. Backend:', Config.BACKEND_URL, 'Use dummy:', Config.USE_DUMMY);
+		console.log('='.repeat(60));
+		console.log('[Copilot] INITIALIZATION COMPLETE');
+		console.log('[Copilot] Backend URL:', Config.BACKEND_URL);
+		console.log('[Copilot] Use dummy mode:', Config.USE_DUMMY);
+		console.log('[Copilot] Window location:', window.location.href);
+		try {
+			console.log('[Copilot] Parent location:', window.parent.location.href);
+		} catch (e) {
+			console.log('[Copilot] Parent location: (cross-origin, cannot access)');
+		}
+		console.log('='.repeat(60));
 	}
 
 	// ============================================

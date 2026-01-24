@@ -53,7 +53,7 @@
 			var hostname = window.parent.location.hostname || window.location.hostname;
 			return 'http://' + hostname + ':8000';
 		} catch (e) {
-			return 'http://localhost:8000';
+			return 'http://localhost:8001';
 		}
 	})();
 	const REGULATORY_SEARCH_API = AGENTS_BACKEND_URL + '/api/regulatory-search';
